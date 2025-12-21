@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JIVA Workspace Manager - Interactive Mockup</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1e1e1e;
+            color: #cccccc;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .vscode-layout { display: flex; width: 100%; height: 100%; }
+        .activity-bar {
+            width: 48px;
+            background: #333333;
+            display: flex;
+            flex-direction: column;
+            padding: 8px 0;
+            gap: 8px;
+            border-right: 1px solid #252525;
+        }
+        .activity-icon {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: #858585;
+            font-size: 24px;
+        }
+        .activity-icon.active { color: #007acc; border-left: 2px solid #007acc; }
+        .sidebar {
+            width: 340px;
+            background: #252526;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #1e1e1e;
+            overflow-y: auto;
+        }
+        .sidebar-header {
+            padding: 12px 16px;
+            background: #2d2d30;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .sidebar-content { padding: 12px; flex: 1; overflow-y: auto; }
+        .widget {
+            background: #2d2d30;
+            border-radius: 4px;
+            margin-bottom: 12px;
+            border: 1px solid #3e3e42;
+        }
+        .widget-header {
+            padding: 12px;
+            background: #37373d;
+            font-size: 13px;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            cursor: pointer;
+        }
+        .widget-body { padding: 12px; }
+        .ticket-info {
+            background: #1e1e1e;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 12px;
+        }
+        .ticket-id { font-size: 14px; font-weight: 600; color: #569cd6; margin-bottom: 4px; }
+        .ticket-title { font-size: 12px; margin-bottom: 8px; }
+        .ticket-meta { display: flex; gap: 12px; font-size: 11px; color: #858585; }
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: 12px;
+        }
+        .status-indicator { display: flex; align-items: center; gap: 8px; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .status-dot.green { background: #4ec9b0; }
+        .status-dot.yellow { background: #dcdcaa; }
+        .btn {
+            padding: 6px 12px;
+            background: #0e639c;
+            border: none;
+            border-radius: 2px;
+            color: #ffffff;
+            font-size: 12px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .btn:hover { background: #1177bb; }
+        .btn-small { padding: 4px 8px; font-size: 11px; }
+        .btn-success { background: #388a34; }
+        .btn-secondary { background: #3e3e42; }
+        .time-display {
+            font-size: 32px;
+            font-weight: 300;
+            text-align: center;
+            padding: 16px;
+            color: #4ec9b0;
+            font-family: 'Courier New', monospace;
+        }
+        .time-controls { display: flex; gap: 8px; justify-content: center; }
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+        .stat-card { background: #1e1e1e; padding: 12px; border-radius: 2px; text-align: center; }
+        .stat-value { font-size: 20px; font-weight: 600; color: #4ec9b0; }
+        .stat-label { font-size: 10px; color: #858585; margin-top: 4px; }
+        .tabs { display: flex; border-bottom: 1px solid #3e3e42; margin-bottom: 12px; }
+        .tab {
+            padding: 8px 16px;
+            font-size: 12px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            color: #858585;
+        }
+        .tab.active { color: #ffffff; border-bottom-color: #007acc; }
+        .issue-list { max-height: 200px; overflow-y: auto; }
+        .issue-item {
+            padding: 8px;
+            background: #1e1e1e;
+            margin-bottom: 4px;
+            border-radius: 2px;
+            font-size: 11px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .issue-severity { font-weight: 600; margin-right: 8px; }
+        .issue-severity.error { color: #f48771; }
+        .issue-severity.warning { color: #dcdcaa; }
+        .issue-file { color: #569cd6; margin-bottom: 2px; }
+        .repo-item {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            background: #1e1e1e;
+            margin-bottom: 4px;
+            border-radius: 2px;
+            font-size: 12px;
+        }
+        .repo-checkbox { margin-right: 8px; }
+        .repo-name { flex: 1; font-weight: 500; }
+        .repo-branch { color: #858585; font-size: 11px; margin-left: 8px; }
+        .commit-input {
+            width: 100%;
+            padding: 8px;
+            background: #3c3c3c;
+            border: 1px solid #3e3e42;
+            border-radius: 2px;
+            color: #cccccc;
+            font-family: inherit;
+            font-size: 12px;
+            resize: vertical;
+            min-height: 60px;
+        }
+        .action-buttons { display: flex; gap: 8px; margin-top: 12px; }
+        .action-buttons .btn { flex: 1; }
+        .badge {
+            display: inline-block;
+            padding: 2px 6px;
+            background: #1e1e1e;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+        .badge.error { color: #f48771; }
+        .badge.success { color: #4ec9b0; }
+        .activity-item {
+            display: flex;
+            gap: 12px;
+            padding: 8px;
+            font-size: 11px;
+            border-left: 2px solid #3e3e42;
+            margin-bottom: 8px;
+        }
+        .activity-time { color: #858585; font-size: 10px; margin-top: 4px; }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #2d2d30;
+            border: 1px solid #007acc;
+            border-radius: 4px;
+            padding: 12px 16px;
+            max-width: 400px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            z-index: 1000;
+            animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn {
+            from { transform: translateX(400px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .notification-header { font-weight: 600; margin-bottom: 4px; font-size: 13px; }
+        .notification-body { font-size: 12px; color: #cccccc; }
+        ::-webkit-scrollbar { width: 10px; }
+        ::-webkit-scrollbar-track { background: #1e1e1e; }
+        ::-webkit-scrollbar-thumb { background: #424242; border-radius: 5px; }
+        .editor-area { flex: 1; background: #1e1e1e; padding: 20px; overflow-y: auto; }
+        .demo-section { margin-bottom: 40px; }
+        .demo-title {
+            font-size: 24px;
+            color: #569cd6;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        .demo-description { font-size: 14px; color: #cccccc; margin-bottom: 20px; line-height: 1.6; }
+        .workflow-step {
+            background: #2d2d30;
+            padding: 16px;
+            border-radius: 4px;
+            margin-bottom: 12px;
+            border-left: 3px solid #007acc;
+        }
+        .step-number {
+            display: inline-block;
+            background: #007acc;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 24px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-right: 8px;
+        }
+        .step-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+        .step-content { font-size: 12px; color: #cccccc; line-height: 1.5; }
+    </style>
+</head>
+<body>
+    <div class="vscode-layout">
+        <!-- Activity Bar -->
+        <div class="activity-bar">
+            <div class="activity-icon">📁</div>
+            <div class="activity-icon">🔍</div>
+            <div class="activity-icon">⎇</div>
+            <div class="activity-icon active">🎯</div>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">JIVA WORKSPACE MANAGER</div>
+            <div class="sidebar-content">
+                
+                <!-- Active Ticket -->
+                <div class="widget">
+                    <div class="widget-header">🎯 Active Ticket</div>
+                    <div class="widget-body">
+                        <div class="ticket-info">
+                            <div class="ticket-id">JIRA-1234</div>
+                            <div class="ticket-title">Implement OAuth2 authentication for user login</div>
+                            <div class="ticket-meta">
+                                <span>⏱ 4h 23m</span>
+                                <span>📊 Dev Assigned</span>
+                            </div>
+                        </div>
+                        <button class="btn btn-small" style="width: 100%;" onclick="showNotification('Task Ended', 'Time logged to Jira: 4h 23m')">End Task & Log Time</button>
+                    </div>
+                </div>
+
+                <!-- Project Health -->
+                <div class="widget">
+                    <div class="widget-header">💚 Project Health</div>
+                    <div class="widget-body">
+                        <div class="status-row">
+                            <div class="status-indicator">
+                                <span class="status-dot green"></span>
+                                <span>Jira Connected</span>
+                            </div>
+                        </div>
+                        <div class="status-row">
+                            <div class="status-indicator">
+                                <span class="status-dot green"></span>
+                                <span>Git Configured</span>
+                            </div>
+                        </div>
+                        <div class="status-row">
+                            <div class="status-indicator">
+                                <span class="status-dot yellow"></span>
+                                <span>Jenkins Limited</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Time Tracker -->
+                <div class="widget">
+                    <div class="widget-header">⏱ Time Tracker</div>
+                    <div class="widget-body">
+                        <div class="time-display" id="timer">04:23:15</div>
+                        <div class="time-controls">
+                            <button class="btn btn-small" onclick="pauseTimer()">⏸ Pause</button>
+                            <button class="btn btn-small btn-secondary" onclick="stopTimer()">⏹ Stop</button>
+                        </div>
+                        <div class="stats-grid">
+                            <div class="stat-card">
+                                <div class="stat-value">28.5h</div>
+                                <div class="stat-label">THIS WEEK</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-value">4.5h</div>
+                                <div class="stat-label">TODAY</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Linting Hub -->
+                <div class="widget">
+                    <div class="widget-header">
+                        🐛 Linting Hub
+                        <span class="badge error">12</span>
+                    </div>
+                    <div class="widget-body">
+                        <div class="tabs">
+                            <div class="tab active">Python</div>
+                            <div class="tab">JavaScript</div>
+                            <div class="tab">Naming</div>
+                        </div>
+                        <div class="issue-list">
+                            <div class="issue-item">
+                                <div>
+                                    <div class="issue-file">auth_controller.py:45</div>
+                                    <div><span class="issue-severity error">ERROR</span> Line too long</div>
+                                </div>
+                                <button class="btn btn-small">⚡ Fix</button>
+                            </div>
+                            <div class="issue-item">
+                                <div>
+                                    <div class="issue-file">user_service.py:12</div>
+                                    <div><span class="issue-severity error">ERROR</span> Undefined variable</div>
+                                </div>
+                                <button class="btn btn-small">🔍 Show</button>
+                            </div>
+                            <div class="issue-item">
+                                <div>
+                                    <div class="issue-file">config.py:78</div>
+                                    <div><span class="issue-severity warning">WARN</span> Print statement (Py2)</div>
+                                </div>
+                                <button class="btn btn-small">⚡ Fix</button>
+                            </div>
+                        </div>
+                        <button class="btn btn-success" style="width: 100%; margin-top: 12px;" onclick="showNotification('Auto-Fix', '8 issues fixed')">Fix All (8)</button>
+                    </div>
+                </div>
+
+                <!-- Repository Workspace -->
+                <div class="widget">
+                    <div class="widget-header">📂 Repository Workspace</div>
+                    <div class="widget-body">
+                        <div class="repo-item">
+                            <input type="checkbox" class="repo-checkbox" checked>
+                            <span class="repo-name">jiva-backend-api</span>
+                            <span class="repo-branch">[feature/JIRA-1234]</span>
+                            <span style="color: #4ec9b0;">🟢</span>
+                        </div>
+                        <div class="repo-item">
+                            <input type="checkbox" class="repo-checkbox" checked>
+                            <span class="repo-name">jiva-auth-service</span>
+                            <span class="repo-branch">[feature/JIRA-1234]</span>
+                            <span style="color: #4ec9b0;">🟢</span>
+                        </div>
+                        <div class="repo-item">
+                            <input type="checkbox" class="repo-checkbox">
+                            <span class="repo-name">jiva-common-utils</span>
+                            <span class="repo-branch">[main]</span>
+                            <span style="color: #dcdcaa;">🟡</span>
+                        </div>
+                        
+                        <textarea class="commit-input" style="margin-top: 12px;">[JIRA-1234] Implement OAuth2 authentication endpoints</textarea>
+                        
+                        <div class="action-buttons">
+                            <button class="btn" onclick="showNotification('Committing...', '3 repos committed')">💾 Commit</button>
+                            <button class="btn btn-secondary" onclick="showNotification('Pushing...', '3 repos pushed')">⬆️ Push</button>
+                        </div>
+                        <button class="btn btn-success" style="width: 100%; margin-top: 8px;" onclick="showNotification('PRs Created', '3 pull requests opened')">🔀 Create PRs</button>
+                    </div>
+                </div>
+
+                <!-- Activity Stream -->
+                <div class="widget">
+                    <div class="widget-header">📋 Recent Activity</div>
+                    <div class="widget-body">
+                        <div class="activity-item">
+                            <div>💬</div>
+                            <div>
+                                Comment sent to JIRA-1234
+                                <div class="activity-time">Today, 2:45 PM</div>
+                            </div>
+                        </div>
+                        <div class="activity-item">
+                            <div>🔨</div>
+                            <div>
+                                Jenkins job #4521 started
+                                <div class="activity-time">Today, 2:30 PM</div>
+                            </div>
+                        </div>
+                        <div class="activity-item">
+                            <div>💾</div>
+                            <div>
+                                Committed to 2 repositories
+                                <div class="activity-time">Today, 1:15 PM</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div class="editor-area">
+            <div class="demo-section">
+                <div class="demo-title">🎯 JIVA Workspace Manager - Demo Workflow</div>
+                <div class="demo-description">
+                    This interactive mockup demonstrates the complete developer workflow using the JIVA Workspace Manager extension. Follow the steps below to understand how developers interact with the system throughout their day.
+                </div>
+            </div>
+
+            <div class="demo-section">
+                <div class="demo-title">📋 Daily Workflow</div>
+                
+                <div class="workflow-step">
+                    <div class="step-title">
+                        <span class="step-number">1</span>
+                        Start New Task (Morning - 9:00 AM)
+                    </div>
+                    <div class="step-content">
+                        <strong>Action:</strong> Developer clicks "Start Task" in JIVA sidebar<br>
+                        <strong>Input:</strong> Enters Jira ticket ID: <code>JIRA-1234</code><br>
+                        <strong>System:</strong> Fetches ticket details from Jira<br>
+                        <strong>Display:</strong> Shows ticket title "Implement OAuth2 authentication for user login"<br>
+                        <strong>Confirmation:</strong> User confirms ticket details<br>
+                        <strong>Result:</strong> Extension creates feature branches in 3 selected repos, starts time tracker, updates Jira status to "Dev Assigned"
+                    </div>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-title">
+                        <span class="step-number">2</span>
+                        Repository Selection (9:05 AM)
+                    </div>
+                    <div class="step-content">
+                        <strong>UI Display:</strong> Checkbox list shows all 4 repositories<br>
+                        <strong>Developer Selects:</strong><br>
+                        ☑ jiva-backend-api<br>
+                        ☑ jiva-auth-service<br>
+                        ☐ jiva-common-utils (reference only)<br>
+                        ☑ jiva-frontend<br>
+                        <strong>Git Operations:</strong> Creates <code>feature/JIRA-1234</code> branch in checked repos<br>
+                        <strong>Manifest Created:</strong> <code>.jiva-internal/ticket-1234-manifest.json</code>
+                    </div>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-title">
+                        <span class="step-number">3</span>
+                        Active Development (9:15 AM - 1:00 PM)
+                    </div>
+                    <div class="step-content">
+                        <strong>Time Tracker:</strong> Running (currently shows 4h 23m)<br>
+                        <strong>Real-time Linting:</strong> Dashboard shows 12 issues detected<br>
+                        • 8 Python errors (line length, undefined vars)<br>
+                        • 4 Naming convention warnings<br>
+                        <strong>Configuration Discovery:</strong> Found 24 config keys across repos<br>
+                        <strong>Auto-Fix Available:</strong> 8 issues can be auto-corrected<br>
+                        <strong>Developer Action:</strong> Clicks "Fix All (8)" button → Issues resolved
+                    </div>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-title">
+                        <span class="step-number">4</span>
+                        Commit Reminder (12:30 PM)
+                    </div>
+                    <div class="step-content">
+                        <strong>System Detection:</strong> 87 uncommitted lines, 3.5 hours since last commit<br>
+                        <strong>Notification:</strong> ⚠️ "You have uncommitted changes. Last commit was 3.5 hours ago"<br>
+                        <strong>Dashboard Widget:</strong> Shows orange warning in Repository Workspace<br>
+                        <strong>Developer Response:</strong> Enters commit message, clicks "Commit All"<br>
+                        <strong>Result:</strong> Changes committed to 3 active repositories
+                    </div>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-title">
+                        <span class="step-number">5</span>
+                        Code Review & Push (1:00 PM)
+                    </div>
+                    <div class="step-content">
+                        <strong>Commit Message:</strong> <code>[JIRA-1234] Implement OAuth2 authentication endpoints</code><br>
+                        <strong>Action:</strong> Clicks "Push All" button<br>
+                        <strong>System:</strong> Pushes to remote for all 3 active repos<br>
+                        <strong>Jira Update:</strong> Auto-posts comment with commit hashes<br>
+                        <strong>Activity Log:</strong> "Committed to 2 repositories" appears in stream
+                    </div>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-title">
+                        <span class="step-number">6</span>
+                        Create Pull Requests (1:15 PM)
+                    </div>
+                    <div class="step-content">
+                        <strong>Action:</strong> Developer clicks "Create PRs" button<br>
+                        <strong>System Processing:</strong><br>
+                        • Creates PR for jiva-backend-api → #451<br>
+                        • Creates PR for jiva-auth-service → #452<br>
+                        • Creates PR for jiva-frontend → #453<br>
+                        <strong>Jira Integration:</strong> Posts comment with all 3 PR links<br>
+                        <strong>MR Tracker:</strong> Updates to show new PRs with status
+                    </div>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-title">
+                        <span class="step-number">7</span>
+                        Jenkins Impact Analysis (2:30 PM)
+                    </div>
+                    <div class="step-content">
+                        <strong>Action:</strong> Clicks "🔨 Run Impact Analysis" button<br>
+                        <strong>System:</strong> Triggers Jenkins job #4521<br>
+                        <strong>Job Parameters:</strong><br>
+                        • TICKET_ID: JIRA-1234<br>
+                        • REPOS: jiva-backend-api,jiva-auth-service,jiva-frontend<br>
+                        • BRANCH: feature/JIRA-1234<br>
+                        <strong>Activity Log:</strong> "Jenkins job #4521 started"<br>
+                        <strong>Jira Update:</strong> Comment posted with Jenkins job URL
+                    </div>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-title">
+                        <span class="step-number">8</span>
+                        Send Code Snippet to Jira (2:45 PM)
+                    </div>
+                    <div class="step-content">
+                        <strong>Scenario:</strong> Developer wants to discuss specific code with team<br>
+                        <strong>Action:</strong> Selects code lines 45-52 in <code>auth_controller.py</code><br>
+                        <strong>Right-click:</strong> "JIVA: Send selection to Jira"<br>
+                        <strong>System:</strong> Auto-formats with markdown code blocks<br>
+                        <strong>Jira Comment:</strong><br>
+                        <code>Code from src/auth/login.py (Line 45-52):</code><br>
+                        <code>```python</code><br>
+                        <code># selected code here</code><br>
+                        <code>```</code>
+                    </div>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-title">
+                        <span class="step-number">9</span>
+                        End Task & Log Time (5:00 PM)
+                    </div>
+                    <div class="step-content">
+                        <strong>Time Tracker Shows:</strong> 4h 23m of active development<br>
+                        <strong>Action:</strong> Clicks "End Task & Log Time" button<br>
+                        <strong>System Prompt:</strong> "Sync 4h 23m to Jira worklog?"<br>
+                        <strong>Developer Confirms:</strong> Yes<br>
+                        <strong>Jira API:</strong> Posts worklog with 263 minutes<br>
+                        <strong>Status Update:</strong> Changes ticket to "In Review"<br>
+                        <strong>Notification:</strong> ✅ "Time logged successfully to JIRA-1234"
+                    </div>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-title">
+                        <span class="step-number">10</span>
+                        Generate Daily Report (5:15 PM)
+                    </div>
+                    <div class="step-content">
+                        <strong>Action:</strong> Command Palette → "JIVA: Generate Daily Report"<br>
+                        <strong>Report Includes:</strong><br>
+                        • Ticket: JIRA-1234 (4h 23m)<br>
+                        • Commits: 5 total across 3 repos<br>
+                        • PRs Created: 3<br>
+                        • Linting Issues Fixed: 8<br>
+                        • Jenkins Jobs: 1 (Success)<br>
+                        <strong>Output Format:</strong> PDF generated<br>
+                        <strong>Auto-Email:</strong> Sent to manager@company.com
+                    </div>
+                </div>
+            </div>
+
+            <div class="demo-section">
+                <div class="demo-title">📊 Weekly Summary Report (Example)</div>
+                <div style="background: #2d2d30; padding: 20px; border-radius: 4px; font-size: 12px; line-height: 1.8;">
+                    <div style="font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #569cd6;">
+                        JIVA Work Summary - Week of Jan 15, 2025
+                    </div>
+                    
+                    <div style="margin-bottom: 16px;">
+                        <div style="font-weight: 600; margin-bottom: 8px;">📊 Overview</div>
+                        <div>• Total Tickets: 5 (3 Completed, 2 In Progress)</div>
+                        <div>• Total Time: 28.5 hours</div>
+                        <div>• Total Commits: 45</div>
+                        <div>• Pull Requests: 12 (8 Merged, 4 Open)</div>
+                        <div>• Linting Issues Fixed: 87</div>
+                    </div>
+
+                    <div style="margin-bottom: 16px;">
+                        <div style="font-weight: 600; margin-bottom: 8px;">🎯 Ticket Details</div>
+                        <div style="background: #1e1e1e; padding: 8px; border-radius: 2px; margin-bottom: 4px;">
+                            <strong>JIRA-1234:</strong> OAuth2 authentication<br>
+                            Status: ✅ Completed | Time: 4h 23m | Commits: 5
+                        </div>
+                        <div style="background: #1e1e1e; padding: 8px; border-radius: 2px; margin-bottom: 4px;">
+                            <strong>JIRA-1235:</strong> Payment gateway integration<br>
+                            Status: ✅ Completed | Time: 6h 15m | Commits: 12
+                        </div>
+                        <div style="background: #1e1e1e; padding: 8px; border-radius: 2px;">
+                            <strong>JIRA-1236:</strong> User profile API<br>
+                            Status: 🔄 In Progress | Time: 3h 45m | Commits: 8
+                        </div>
+                    </div>
+
+                    <div>
+                        <div style="font-weight: 600; margin-bottom: 8px;">📈 Productivity Metrics</div>
+                        <div>• Average commits per day: 9</div>
+                        <div>• Code quality score: 92% (↑ 5% from last week)</div>
+                        <div>• Test coverage: 87%</div>
+                        <div>• Average PR review time: 4.2 hours</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="demo-section">
+                <div class="demo-title">🔧 Key Features Demonstrated</div>
+                
+                <div style="background: #2d2d30; padding: 16px; border-radius: 4px; margin-bottom: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 8px; color: #4ec9b0;">✅ Workspace Snapshot</div>
+                    <div style="font-size: 12px; line-height: 1.6;">
+                        Automatically creates feature branches across selected repositories, maintaining a manifest of active vs reference repos. Tracks which repos are actively being developed and which are pinned for reference.
+                    </div>
+                </div>
+
+                <div style="background: #2d2d30; padding: 16px; border-radius: 4px; margin-bottom: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 8px; color: #4ec9b0;">✅ Time Tracking & Jira Integration</div>
+                    <div style="font-size: 12px; line-height: 1.6;">
+                        Tracks active development time (excluding idle periods > 5 minutes). Automatically syncs time to Jira worklog on task completion. Updates ticket status and posts comments for all major actions.
+                    </div>
+                </div>
+
+                <div style="background: #2d2d30; padding: 16px; border-radius: 4px; margin-bottom: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 8px; color: #4ec9b0;">✅ Real-time Linting & Auto-Fix</div>
+                    <div style="font-size: 12px; line-height: 1.6;">
+                        Multi-language linting (Python, JavaScript, HTML/CSS) with unified dashboard. Supports auto-fix for Python 3 migration, naming conventions, and common code quality issues.
+                    </div>
+                </div>
+
+                <div style="background: #2d2d30; padding: 16px; border-radius: 4px; margin-bottom: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 8px; color: #4ec9b0;">✅ Multi-Repo Management</div>
+                    <div style="font-size: 12px; line-height: 1.6;">
+                        Bulk commit, push, and PR creation across multiple repositories. Smart filtering based on active/reference status. Detects branch desynchronization and provides realignment options.
+                    </div>
+                </div>
+
+                <div style="background: #2d2d30; padding: 16px; border-radius: 4px; margin-bottom: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 8px; color: #4ec9b0;">✅ Commit Reminders</div>
+                    <div style="font-size: 12px; line-height: 1.6;">
+                        Proactive notifications when uncommitted changes exceed thresholds (50+ lines or 3+ hours since last commit). Helps prevent lost work and encourages regular commits.
+                    </div>
+                </div>
+
+                <div style="background: #2d2d30; padding: 16px; border-radius: 4px; margin-bottom: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 8px; color: #4ec9b0;">✅ Configuration Discovery</div>
+                    <div style="font-size: 12px; line-height: 1.6;">
+                        Regex-based scanning finds all configuration keys (database.timeout, cache.redis.host, etc.) across the entire workspace. Tracks usage across repos and branches for impact analysis.
+                    </div>
+                </div>
+
+                <div style="background: #2d2d30; padding: 16px; border-radius: 4px; margin-bottom: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 8px; color: #4ec9b0;">✅ Activity Stream & Reports</div>
+                    <div style="font-size: 12px; line-height: 1.6;">
+                        Timeline of all extension actions (commits, Jira comments, Jenkins jobs). Generate daily, weekly, monthly reports in PDF, HTML, or Excel format with comprehensive metrics.
+                    </div>
+                </div>
+            </div>
+
+            <div class="demo-section">
+                <div class="demo-title">💡 Usage Instructions</div>
+                <div style="background: #2d2d30; padding: 20px; border-radius: 4px; font-size: 13px; line-height: 1.8;">
+                    <div style="margin-bottom: 12px;">
+                        <strong>Try the Interactive Elements:</strong>
+                    </div>
+                    <ul style="margin-left: 20px; margin-bottom: 16px;">
+                        <li>Click "End Task & Log Time" button to see time logging notification</li>
+                        <li>Click "Fix All (8)" to see auto-fix notification</li>
+                        <li>Click "Commit All" to see bulk commit notification</li>
+                        <li>Click "Create PRs" to see PR creation notification</li>
+                        <li>Click Pause/Stop buttons on time tracker</li>
+                    </ul>
+                    
+                    <div style="margin-bottom: 12px;">
+                        <strong>Sidebar Widgets:</strong>
+                    </div>
+                    <ul style="margin-left: 20px; margin-bottom: 16px;">
+                        <li>All widgets show real-time data and status</li>
+                        <li>Green dots indicate healthy connections</li>
+                        <li>Yellow dots indicate warnings or limited access</li>
+                        <li>Repository checkboxes control which repos are included in bulk operations</li>
+                    </ul>
+
+                    <div style="margin-bottom: 12px;">
+                        <strong>Workflow Steps:</strong>
+                    </div>
+                    <ul style="margin-left: 20px;">
+                        <li>Read through the 10-step daily workflow in the main content area</li>
+                        <li>Each step shows realistic timestamps and developer actions</li>
+                        <li>Demonstrates complete lifecycle from task start to daily report</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="demo-section" style="background: #37373d; padding: 20px; border-radius: 4px; border-left: 4px solid #007acc;">
+                <div style="font-size: 16px; font-weight: 600; margin-bottom: 12px; color: #569cd6;">
+                    📊 Extension Impact Metrics
+                </div>
+                <div style="font-size: 13px; line-height: 1.8;">
+                    <div style="margin-bottom: 8px;">⏱ <strong>60% reduction</strong> in context switching between tools</div>
+                    <div style="margin-bottom: 8px;">🚀 <strong>Task setup time:</strong> 15 minutes → 2 minutes</div>
+                    <div style="margin-bottom: 8px;">✅ <strong>Code quality improvement:</strong> 40% increase in standards compliance</div>
+                    <div style="margin-bottom: 8px;">💾 <strong>Time saved:</strong> 30 minutes per developer per day on manual updates</div>
+                    <div style="margin-bottom: 8px;">📈 <strong>Developer satisfaction:</strong> 95% adoption rate within 3 months</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div id="notificationContainer"></div>
+
+    <script>
+        // Timer functionality
+        let timerRunning = true;
+        let seconds = 15795; // 4h 23m 15s
+
+        function updateTimerDisplay() {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            
+            const display = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            document.getElementById('timer').textContent = display;
+        }
+
+        function startTimer() {
+            if (timerRunning) {
+                setInterval(() => {
+                    if (timerRunning) {
+                        seconds++;
+                        updateTimerDisplay();
+                    }
+                }, 1000);
+            }
+        }
+
+        function pauseTimer() {
+            timerRunning = !timerRunning;
+            const btn = event.target;
+            btn.textContent = timerRunning ? '⏸ Pause' : '▶️ Resume';
+            showNotification(
+                timerRunning ? 'Timer Resumed' : 'Timer Paused', 
+                timerRunning ? 'Time tracking resumed' : 'Time tracking paused'
+            );
+        }
+
+        function stopTimer() {
+            timerRunning = false;
+            showNotification('Timer Stopped', 'Session ended. Ready to log time to Jira.');
+        }
+
+        // Notification system
+        function showNotification(title, message) {
+            const container = document.getElementById('notificationContainer');
+            
+            const notification = document.createElement('div');
+            notification.className = 'notification';
+            notification.innerHTML = `
+                <div class="notification-header">${title}</div>
+                <div class="notification-body">${message}</div>
+            `;
+            
+            container.appendChild(notification);
+            
+            // Auto-remove after 3 seconds
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                notification.style.transform = 'translateX(400px)';
+                setTimeout(() => {
+                    container.removeChild(notification);
+                }, 300);
+            }, 3000);
+        }
+
+        // Initialize timer on load
+        startTimer();
+
+        // Demo button interactions
+        console.log('JIVA Workspace Manager Mockup Loaded');
+        console.log('Click any button to see interactive notifications!');
+    </script>
+</body>
+</html>

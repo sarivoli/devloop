@@ -1,0 +1,23 @@
+<svg width="24" height="24" viewBox="0 0 24 24"
+     xmlns="http://www.w3.org/2000/svg"
+     fill="none">
+
+  <!-- Left Code Bracket -->
+  <polyline points="10,4 6,12 10,20"
+            stroke="currentColor"
+            stroke-width="2.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"/>
+
+  <!-- Right Code Bracket -->
+  <polyline points="14,4 18,12 14,20"
+            stroke="currentColor"
+            stroke-width="2.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"/>
+
+  <!-- Central Control Node -->
+  <circle cx="12" cy="12" r="3"
+          fill="currentColor"/>
+
+</svg>

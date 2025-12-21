@@ -1,0 +1,41 @@
+# Source files (compiled JS is in out/)
+src/**
+tsconfig.json
+.eslintrc.json
+
+# Tests
+**/*.test.ts
+**/*.spec.ts
+**/test/**
+coverage/**
+*.log
+
+
+# Development files
+.vscode/**
+.vscode-test/**
+node_modules/**
+*.vsix
+
+# Build configuration
+jest.config.js
+.gitignore
+
+# Documentation (keep README and LICENSE)
+mockup.html
+samples/**
+JIVA_Spec.md
+devloop_workspace_manager_technical_spec.md
+devloop_workspace_manager_technical_spec.html
+
+# Git
+.git/**
+.github/**
+
+# NPM
+.npmrc
+package-lock.json
+
+# Output (keep only what's needed)
+out/**/*.map
+out/**/*.ts

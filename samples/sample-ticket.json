@@ -1,0 +1,17 @@
+{
+    "id": "10001",
+    "key": "JIRA-1234",
+    "summary": "Implement OAuth2 authentication for user login",
+    "description": "Add OAuth2 support with SSO integration for the main application. This includes:\n- OAuth2 provider configuration\n- Token management\n- SSO redirect flow\n- Session handling",
+    "status": {
+        "id": "3",
+        "name": "Dev Assigned",
+        "category": "in_progress"
+    },
+    "assignee": "developer@company.com",
+    "reporter": "pm@company.com",
+    "priority": "High",
+    "issueType": "Story",
+    "created": "2025-01-10T09:00:00Z",
+    "updated": "2025-01-15T14:30:00Z"
+}

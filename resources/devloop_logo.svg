@@ -1,0 +1,49 @@
+<svg width="256" height="256" viewBox="0 0 256 256"
+     xmlns="http://www.w3.org/2000/svg">
+
+  <!-- Background -->
+  <rect x="16" y="16" width="224" height="224" rx="28"
+        fill="#0F172A"/>
+
+  <!-- Outer Workflow Loop -->
+  <circle cx="128" cy="128" r="78"
+          fill="none"
+          stroke="#334155"
+          stroke-width="4"
+          stroke-dasharray="6 10"/>
+
+  <!-- Orchestration Nodes (Workspaces / Repos) -->
+  <circle cx="128" cy="52" r="6" fill="#22C55E"/>
+  <circle cx="188" cy="92" r="6" fill="#22C55E"/>
+  <circle cx="188" cy="164" r="6" fill="#22C55E"/>
+  <circle cx="128" cy="204" r="6" fill="#22C55E"/>
+  <circle cx="68" cy="164" r="6" fill="#22C55E"/>
+  <circle cx="68" cy="92" r="6" fill="#22C55E"/>
+
+  <!-- Orchestration Connectors -->
+  <line x1="128" y1="52" x2="128" y2="116" stroke="#38BDF8" stroke-width="2"/>
+  <line x1="188" y1="92" x2="146" y2="116" stroke="#38BDF8" stroke-width="2"/>
+  <line x1="188" y1="164" x2="146" y2="140" stroke="#38BDF8" stroke-width="2"/>
+  <line x1="128" y1="204" x2="128" y2="140" stroke="#38BDF8" stroke-width="2"/>
+  <line x1="68" y1="164" x2="110" y2="140" stroke="#38BDF8" stroke-width="2"/>
+  <line x1="68" y1="92" x2="110" y2="116" stroke="#38BDF8" stroke-width="2"/>
+
+  <!-- Code Brackets -->
+  <polyline points="112,92 88,128 112,164"
+            fill="none"
+            stroke="#38BDF8"
+            stroke-width="10"
+            stroke-linecap="round"
+            stroke-linejoin="round"/>
+
+  <polyline points="144,92 168,128 144,164"
+            fill="none"
+            stroke="#38BDF8"
+            stroke-width="10"
+            stroke-linecap="round"
+            stroke-linejoin="round"/>
+
+  <!-- Central Orchestration Hub -->
+  <circle cx="128" cy="128" r="12" fill="#38BDF8"/>
+
+</svg>

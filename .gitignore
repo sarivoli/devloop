@@ -1,0 +1,8 @@
+out
+node_modules
+.vscode
+.vscode-test
+*.vsix
+package-lock.json
+.demo/
+devloop_workspace_manager_technical_spec.html

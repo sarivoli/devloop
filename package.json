@@ -1,0 +1,235 @@
+{
+  "name": "devloop-workspace-manager",
+  "displayName": "DevLoop",
+  "description": "Unified Code Development Workflow & Workspace Orchestration",
+  "version": "0.1.0",
+  "icon": "resources/devloop_logo.png",
+  "publisher": "devloop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/devloop/devloop-workspace-manager"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "SCM Providers"
+  ],
+  "keywords": [
+    "jira",
+    "git",
+    "multi-repo",
+    "time-tracking",
+    "workspace"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "devloop-explorer",
+          "title": "DevLoop",
+          "icon": "resources/devloop_icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "devloop-explorer": [
+        {
+          "type": "webview",
+          "id": "devloop-sidebar",
+          "name": "Workspace Dashboard"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "devloop.refreshEntry",
+        "title": "DevLoop: Refresh Dashboard",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "devloop.startTask",
+        "title": "DevLoop: Start Task"
+      },
+      {
+        "command": "devloop.endTask",
+        "title": "DevLoop: End Task & Log Time"
+      },
+      {
+        "command": "devloop.pauseTimer",
+        "title": "DevLoop: Pause Timer"
+      },
+      {
+        "command": "devloop.resumeTimer",
+        "title": "DevLoop: Resume Timer"
+      },
+      {
+        "command": "devloop.commitAll",
+        "title": "DevLoop: Commit All Repositories"
+      },
+      {
+        "command": "devloop.pushAll",
+        "title": "DevLoop: Push All Repositories"
+      },
+      {
+        "command": "devloop.createPRs",
+        "title": "DevLoop: Create Pull Requests"
+      },
+      {
+        "command": "devloop.setJiraToken",
+        "title": "DevLoop: Set Jira API Token"
+      },
+      {
+        "command": "devloop.configureJira",
+        "title": "DevLoop: Configure Jira Connection"
+      },
+      {
+        "command": "devloop.validateJira",
+        "title": "DevLoop: Validate Jira Configuration"
+      },
+      {
+        "command": "devloop.configureGit",
+        "title": "DevLoop: Configure Git Provider"
+      },
+      {
+        "command": "devloop.configureJenkins",
+        "title": "DevLoop: Configure Jenkins"
+      },
+      {
+        "command": "devloop.openSettings",
+        "title": "DevLoop: Open Settings Panel"
+      },
+      {
+        "command": "devloop.clearData",
+        "title": "DevLoop: Clear All Data"
+      }
+    ],
+    "configuration": {
+      "title": "DevLoop",
+      "properties": {
+        "devloop.branding.name": {
+          "type": "string",
+          "default": "DevLoop",
+          "description": "Custom name for the tool/extension. Used in logs, UI, and generated comments."
+        },
+        "devloop.jira.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for Jira instance (e.g., https://jira.company.com)"
+        },
+        "devloop.jira.email": {
+          "type": "string",
+          "default": "",
+          "description": "Your Jira account email address (used for API authentication)"
+        },
+        "devloop.jira.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Jira integration"
+        },
+        "devloop.useMockData": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use mock data for demonstration purposes"
+        },
+        "devloop.git.provider": {
+          "type": "string",
+          "enum": ["github", "gitlab", "bitbucket"],
+          "default": "github",
+          "description": "Git provider for PR creation"
+        },
+        "devloop.git.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Git provider base URL (e.g., https://api.github.com or https://gitlab.company.com)"
+        },
+        "devloop.git.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Git provider integration for PR creation"
+        },
+        "devloop.jenkins.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Jenkins server URL (e.g., https://jenkins.company.com)"
+        },
+        "devloop.jenkins.username": {
+          "type": "string",
+          "default": "",
+          "description": "Jenkins username for API authentication"
+        },
+        "devloop.jenkins.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Jenkins integration"
+        },
+        "devloop.jenkins.defaultJob": {
+          "type": "string",
+          "default": "",
+          "description": "Default Jenkins job name for impact analysis"
+        },
+        "devloop.jenkins.jobParameters": {
+          "type": "object",
+          "default": {},
+          "description": "Default parameters for Jenkins jobs (key-value pairs)"
+        },
+        "devloop.timeTracker.idleThreshold": {
+          "type": "number",
+          "default": 5,
+          "description": "Minutes of inactivity before timer pauses automatically"
+        },
+        "devloop.timeTracker.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start timer when task begins"
+        },
+        "devloop.git.defaultBaseBranch": {
+          "type": "string",
+          "default": "main",
+          "description": "Default base branch for feature branches"
+        },
+        "devloop.git.branchPrefix": {
+          "type": "string",
+          "default": "feature/",
+          "description": "Prefix for feature branch names"
+        },
+        "devloop.storage.path": {
+          "type": "string",
+          "default": "",
+          "description": "Custom base path for data storage. Data will be stored in a 'devloop_storage' subdirectory."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "test": "jest --passWithNoTests",
+    "pretest": "npm run compile",
+    "prebuild": "npm run test",
+    "build": "npm run compile && vsce package",
+    "vscode:prepublish": "npm run test && npm run compile",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^18.x",
+    "@types/vscode": "^1.80.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.45.0",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.1.6"
+  },
+  "dependencies": {
+    "@vscode/webview-ui-toolkit": "^1.2.2",
+    "axios": "^1.6.0"
+  }
+}

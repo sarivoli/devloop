@@ -1,0 +1,44 @@
+[
+    {
+        "name": "devloop-backend-api",
+        "path": "C:/projects/devloop-backend-api",
+        "currentBranch": "feature/JIRA-1234",
+        "baseBranch": "main",
+        "mode": "active",
+        "status": {
+            "state": "clean"
+        },
+        "hasUncommittedChanges": false,
+        "uncommittedFiles": 0,
+        "uncommittedLines": 0,
+        "lastCommitTime": "2025-01-15T13:00:00Z"
+    },
+    {
+        "name": "devloop-auth-service",
+        "path": "C:/projects/devloop-auth-service",
+        "currentBranch": "feature/JIRA-1234",
+        "baseBranch": "main",
+        "mode": "active",
+        "status": {
+            "state": "dirty",
+            "message": "3 files modified"
+        },
+        "hasUncommittedChanges": true,
+        "uncommittedFiles": 3,
+        "uncommittedLines": 45,
+        "lastCommitTime": "2025-01-15T11:00:00Z"
+    },
+    {
+        "name": "devloop-common-utils",
+        "path": "C:/projects/devloop-common-utils",
+        "currentBranch": "main",
+        "baseBranch": "main",
+        "mode": "reference",
+        "status": {
+            "state": "clean"
+        },
+        "hasUncommittedChanges": false,
+        "uncommittedFiles": 0,
+        "uncommittedLines": 0
+    }
+]

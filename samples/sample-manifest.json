@@ -1,0 +1,44 @@
+{
+    "ticketId": "JIRA-1234",
+    "ticketSummary": "Implement OAuth2 authentication for user login",
+    "startedAt": "2025-01-15T10:30:00Z",
+    "startedBy": "developer@company.com",
+    "status": "active",
+    "repos": {
+        "devloop-backend-api": {
+            "mode": "active",
+            "branch": "feature/JIRA-1234",
+            "baseBranch": "main",
+            "createdAt": "2025-01-15T10:30:15Z"
+        },
+        "devloop-auth-service": {
+            "mode": "active",
+            "branch": "feature/JIRA-1234",
+            "baseBranch": "main",
+            "createdAt": "2025-01-15T10:30:16Z"
+        },
+        "devloop-common-utils": {
+            "mode": "reference",
+            "branch": "rel_v1.0",
+            "baseBranch": "main",
+            "type": "tag",
+            "pinned": true
+        }
+    },
+    "timeTracking": {
+        "sessions": [
+            {
+                "ticketId": "JIRA-1234",
+                "startTime": "2025-01-15T09:00:00Z",
+                "endTime": "2025-01-15T12:30:00Z",
+                "duration": 210,
+                "isPaused": false,
+                "pausedDuration": 0,
+                "activities": []
+            }
+        ],
+        "totalTime": 210,
+        "lastSynced": "2025-01-15T12:30:00Z",
+        "syncedToJira": true
+    }
+}
