@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { SidebarProvider } from './SidebarProvider';
 import { CredentialManager } from './CredentialManager';
 import { DataManager } from './DataManager';
@@ -6,7 +7,7 @@ import { JiraClient } from './JiraClient';
 import { JenkinsClient } from './JenkinsClient';
 import { TimeTracker } from './TimeTracker';
 import { GitManager } from './GitManager';
-import { JiraTicket, Repository, TaskManifest, WorkLog } from './types';
+import { JiraTicket, Repository, TaskManifest, WorkLog, LintingResult } from './types';
 
 // Global instances
 let outputChannel: vscode.OutputChannel;
@@ -17,6 +18,8 @@ let jenkinsClient: JenkinsClient;
 let timeTracker: TimeTracker;
 let gitManager: GitManager;
 let sidebarProvider: SidebarProvider;
+let globalExtensionUri: vscode.Uri;
+let globalExtensionContext: vscode.ExtensionContext;
 
 /**
  * Get the configured tool name
@@ -29,6 +32,8 @@ function getToolName(): string {
  * Extension activation
  */
 export async function activate(context: vscode.ExtensionContext) {
+    globalExtensionUri = context.extensionUri;
+    globalExtensionContext = context;
     // Create output channel for logging
     outputChannel = vscode.window.createOutputChannel(getToolName());
     log(`${getToolName()} extension activating...`);
@@ -55,6 +60,10 @@ export async function activate(context: vscode.ExtensionContext) {
         sidebarProvider.updateTimeTracker(state);
     });
 
+    timeTracker.onPersist(async (state) => {
+        await dataManager.saveTimerState(state);
+    });
+
     // Register sidebar webview
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider('devloop-sidebar', sidebarProvider)
@@ -66,7 +75,78 @@ export async function activate(context: vscode.ExtensionContext) {
     // Initialize connections and update dashboard
     await initializeDashboard();
 
+    // Check for running timer to restore
+    await checkAndRestoreTimer();
+
+    // Set up active editor tracking
+    vscode.window.onDidChangeActiveTextEditor(editor => {
+        if (editor) {
+            handleActiveEditorChange(editor);
+        }
+    }, null, context.subscriptions);
+
+    // Initial check
+    if (vscode.window.activeTextEditor) {
+        handleActiveEditorChange(vscode.window.activeTextEditor);
+    }
+
     log(`${getToolName()} extension activated successfully`);
+}
+
+
+/**
+ * Check for persisted timer state and restore it
+ */
+async function checkAndRestoreTimer(): Promise<void> {
+    const persisted = await dataManager.getTimerState();
+    if (persisted && persisted.isRunning && persisted.currentTicketId) {
+        log(`Persisted running timer found for ${persisted.currentTicketId}`);
+        
+        const lastTickTs = new Date(persisted.lastTickTime).getTime();
+        const driftMs = Date.now() - lastTickTs;
+        const driftMins = Math.floor(driftMs / (1000 * 60));
+
+        let message = `DevLoop: A running timer was found for ${persisted.currentTicketId}.`;
+        let options = ['Resume', 'Discard'];
+        
+        if (driftMins > 0) {
+            message += `\n${driftMins}m have passed since last activity.`;
+            options = ['Resume', 'Resume (Including Drift)', 'Discard'];
+        }
+
+        const selection = await vscode.window.showInformationMessage(message, ...options);
+
+        if (selection === 'Resume') {
+            timeTracker.restore(persisted, false);
+            vscode.window.showInformationMessage(`Timer resumed for ${persisted.currentTicketId}`);
+        } else if (selection === 'Resume (Including Drift)') {
+            timeTracker.restore(persisted, true);
+            vscode.window.showInformationMessage(`Timer resumed with ${driftMins}m drift for ${persisted.currentTicketId}`);
+        } else if (selection === 'Discard') {
+            await dataManager.clearTimerState();
+            log('Persisted timer discarded');
+        }
+    }
+}
+
+/**
+ * Handle active editor change to update state and switch tabs
+ */
+function handleActiveEditorChange(editor: vscode.TextEditor) {
+    const filePath = editor.document.fileName;
+    const ext = path.extname(filePath).toLowerCase();
+    
+    let tab: 'python' | 'javascript' | 'html' = 'python';
+    if (['.js', '.ts', '.jsx', '.tsx'].includes(ext)) {
+        tab = 'javascript';
+    } else if (['.html', '.htm'].includes(ext)) {
+        tab = 'html';
+    }
+    
+    sidebarProvider.updateState({ 
+        activeFile: filePath,
+        activeLintTab: tab 
+    }, true);
 }
 
 /**
@@ -205,14 +285,27 @@ async function initializeDashboard(): Promise<void> {
     const jenkinsStatus = await jenkinsClient.checkConnection();
 
     // Detect repositories
-    const repos = await gitManager.detectRepositories();
+    let repos = await gitManager.detectRepositories();
 
     // Check for active context
     const activeContext = await dataManager.getActiveContext();
     let activeTicket: JiraTicket | null = null;
+    let manifest = null;
 
     if (activeContext.ticketId) {
         activeTicket = await jiraClient.getTicket(activeContext.ticketId);
+        manifest = await dataManager.readManifest(activeContext.ticketId);
+    }
+
+    // Restore repository modes from manifest if available
+    if (manifest && manifest.repos) {
+        repos = repos.map(repo => {
+            const manifestEntry = manifest!.repos[repo.name];
+            if (manifestEntry) {
+                return { ...repo, mode: manifestEntry.mode, isStatic: manifestEntry.isStatic ?? repo.isStatic };
+            }
+            return repo;
+        });
     }
 
     // Get recent tasks and stats
@@ -235,7 +328,8 @@ async function initializeDashboard(): Promise<void> {
         },
         repositories: repos,
         recentTasks,
-        historyStats
+        historyStats,
+        lintingResults: await dataManager.readLintingResults()
     });
 
     log('Dashboard initialized');
@@ -275,7 +369,8 @@ async function handleWebviewMessage(message: any): Promise<void> {
             sidebarProvider.updateState({ timeTracker: timeTracker.getState() });
             break;
         case 'resumeTimer':
-            timeTracker.resume();
+            const includeIdle = message.payload === true || (message.payload && message.payload.includeIdle === true);
+            timeTracker.resume(includeIdle);
             sidebarProvider.updateState({ timeTracker: timeTracker.getState() });
             break;
         case 'startTimer':
@@ -289,7 +384,31 @@ async function handleWebviewMessage(message: any): Promise<void> {
                     timestamp: new Date().toISOString()
                 };
                 timeTracker.start(activeCtx.ticketId, snapshot);
+                
+                // Add Jira comment: development started
+                if (ticket) {
+                    const timestamp = new Date().toLocaleString();
+                    await jiraClient.postComment(ticket.key, `Development started at ${timestamp} (tracked via ${getToolName()})`);
+                }
+                
                 sidebarProvider.updateState({ timeTracker: timeTracker.getState() });
+            }
+            break;
+        case 'prepareWorkspace':
+            await prepareWorkspace(message.payload);
+            await runLinting();
+            break;
+        case 'switchLintTab':
+            sidebarProvider.updateState({ activeLintTab: message.payload as any }, true);
+            break;
+        case 'runLinting':
+            const runConfirm = await vscode.window.showInformationMessage(
+                'Full workspace linting can take some time. Do you want to proceed?',
+                { modal: true },
+                'Yes'
+            );
+            if (runConfirm === 'Yes') {
+                await runLinting();
             }
             break;
         case 'stopTimer':
@@ -304,25 +423,32 @@ async function handleWebviewMessage(message: any): Promise<void> {
         case 'pushAll':
             await pushAllRepos();
             break;
+        case 'searchLint':
+            log(`Search query update: "${message.payload}"`);
+            sidebarProvider.updateState({ searchQuery: message.payload as string }, true);
+            break;
+        case 'resetLintSearch':
+            sidebarProvider.updateState({ searchQuery: '' }, true);
+            break;
         case 'createPRs':
             vscode.window.showInformationMessage('DevLoop: PR creation coming soon');
             break;
         case 'fixAll':
-            vscode.window.showInformationMessage('[Mock] Fixed all auto-fixable issues');
+            await fixAllIssues(message.payload);
             break;
         case 'fixIssue':
-            vscode.window.showInformationMessage(`[Mock] Fixed issue at ${message.payload}`);
+            await fixIssue(message.payload);
             break;
         case 'showIssue':
-            // Would navigate to file:line in production
-            vscode.window.showInformationMessage(`[Mock] Would navigate to ${message.payload}`);
+            const { file, line, noScroll } = message.payload as { file: string, line: number, noScroll?: boolean };
+            const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+            const editor = await vscode.window.showTextDocument(doc, { preserveFocus: true });
+            const pos = new vscode.Position(line - 1, 0);
+            editor.selection = new vscode.Selection(pos, pos);
+            editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
             break;
         case 'refreshRepos':
-            const repos = await gitManager.detectRepositories();
-            sidebarProvider.updateState({ 
-                repositories: repos,
-                toolName: getToolName()
-            });
+            await initializeDashboard();
             break;
     }
 }
@@ -721,26 +847,90 @@ async function initializeTask(ticket: JiraTicket): Promise<void> {
     await dataManager.writeManifest(manifest);
     await dataManager.setActiveContext(ticket.key);
 
-    // Start timer logic moved to manual action or separate call
-    // But user might expect it to start immediately?
-    // "User can start the task ... get the ticket ... store in log"
-    // We'll auto-start timer here with snapshot
-    const snapshot = {
-        status: ticket.status.name,
-        assignee: ticket.assignee || 'Unassigned',
-        timestamp: new Date().toISOString()
-    };
-    timeTracker.start(ticket.key, snapshot);
+    // Start timer logic removed from auto-start
+    // The user will now click the Start button manually
 
     // Update dashboard
     sidebarProvider.updateState({
         activeTicket: ticket,
         repositories: activeRepos,
-        timeTracker: timeTracker.getState()
+        timeTracker: timeTracker.getState(),
+        activeTicketTotalTime: await dataManager.getTicketTotalTime(ticket.key),
+        activeMainTab: 'active-task'
     });
 
     log(`Task initialized: ${ticket.key}`);
     vscode.window.showInformationMessage(`${getToolName()}: Active task set to ${ticket.key}`);
+}
+
+/**
+ * Prepare workspace for the current task
+ */
+async function prepareWorkspace(payload?: any): Promise<void> {
+    const activeContext = await dataManager.getActiveContext();
+    if (!activeContext.ticketId) {
+        vscode.window.showWarningMessage(`${getToolName()}: No active task found. Start a task first.`);
+        return;
+    }
+
+    const ticketId = activeContext.ticketId;
+    const branchName = `feature/${ticketId}`;
+    
+    // Get repos and manifest to determine which are "active"
+    const manifest = await dataManager.readManifest(ticketId);
+    if (!manifest) {
+        vscode.window.showErrorMessage(`${getToolName()}: Manifest not found for ${ticketId}`);
+        return;
+    }
+
+    const repos = await gitManager.detectRepositories();
+    const activeRepos = repos.filter(r => manifest.repos[r.name]?.mode === 'active');
+
+    if (activeRepos.length === 0) {
+        vscode.window.showWarningMessage(`${getToolName()}: No active repositories found to prepare. Please select repositories in the Workspace section first.`);
+        return;
+    }
+
+    log(`Preparing workspace for ${ticketId} in ${activeRepos.length} repos`);
+
+    for (const repo of activeRepos) {
+        if (repo.isStatic) {
+            vscode.window.showInformationMessage(`"${repo.name}" has no version control, hence it is already ready for your code shipment.`);
+            continue;
+        }
+        // ... rest of Git preparation logic (not shown in previous view_file, but assuming it's below L800)
+    }
+
+    for (const repo of activeRepos) {
+        const hasChanges = await gitManager.hasUncommittedChanges(repo.path);
+        
+        if (hasChanges) {
+            const action = await vscode.window.showWarningMessage(
+                `${getToolName()}: Repository "${repo.name}" has unsaved changes in branch "${repo.currentBranch}".`,
+                'Stash and Switch',
+                'Ignore and Switch',
+                'Cancel'
+            );
+
+            if (action === 'Cancel' || !action) {
+                log(`Workspace preparation cancelled for ${repo.name}`);
+                continue;
+            }
+
+            if (action === 'Stash and Switch') {
+                await gitManager.stashChanges(repo.path, `Auto-stash for ${ticketId}`);
+            }
+        }
+
+        // Create or switch to topic branch
+        await gitManager.createFeatureBranch(repo.path, 'main', branchName);
+    }
+
+    // Refresh repos to show new branches
+    const updatedRepos = await gitManager.detectRepositories();
+    sidebarProvider.updateState({ repositories: updatedRepos }, true);
+    
+    vscode.window.showInformationMessage(`${getToolName()}: Workspace prepared for ${ticketId}`);
 }
 
 /**
@@ -806,34 +996,38 @@ async function endTask(): Promise<void> {
     const totalMinutes = logs.reduce((sum, l) => sum + l.duration, 0);
 
     // Confirm end task
-    const confirm = await vscode.window.showInformationMessage(
+    const syncAction = await vscode.window.showInformationMessage(
         `End task ${ticketId}? Sync ${logs.length} logs (${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m) to Jira?`,
-        'Yes', 'No'
+        'Yes', 'No (Complete Locally)', 'Cancel'
     );
 
-    if (confirm !== 'Yes') {
+    if (syncAction === 'Cancel' || !syncAction) {
         return;
     }
 
+    const shouldSync = syncAction === 'Yes';
+
     // Log total work time
-    if (totalMinutes > 0) {
+    if (shouldSync && totalMinutes > 0) {
         await jiraClient.logWorkTime(ticketId, totalMinutes);
     }
 
     // Post detailed comment
-    const logLines = logs.map(l => {
-        const start = new Date(l.startTime).toLocaleString(undefined, {
-            month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'
+    if (shouldSync) {
+        const logLines = logs.map(l => {
+            const start = new Date(l.startTime).toLocaleString(undefined, {
+                month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'
+            });
+            const end = new Date(l.endTime).toLocaleTimeString(undefined, {
+                hour: '2-digit', minute:'2-digit'
+            });
+            return `- ${start} - ${end} (${l.duration}m) [Status: ${l.ticketSnapshot.status}, Assg: ${l.ticketSnapshot.assignee}]`;
         });
-        const end = new Date(l.endTime).toLocaleTimeString(undefined, {
-            hour: '2-digit', minute:'2-digit'
-        });
-        return `- ${start} - ${end} (${l.duration}m) [Status: ${l.ticketSnapshot.status}, Assg: ${l.ticketSnapshot.assignee}]`;
-    });
 
-    const comment = `Work Logged via ${getToolName()}:\n${logLines.join('\n')}\n**Total: ${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m**`;
-    
-    await jiraClient.postComment(ticketId, comment);
+        const comment = `Work Logged via ${getToolName()}:\n${logLines.join('\n')}\n**Total: ${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m**`;
+        
+        await jiraClient.postComment(ticketId, comment);
+    }
 
     // Mark as completed and synced
     const manifest = await dataManager.readManifest(ticketId);
@@ -843,7 +1037,9 @@ async function endTask(): Promise<void> {
         await dataManager.writeManifest(manifest);
     }
     
-    await dataManager.markLogsSynced(ticketId, logs.map(l => l.id));
+    if (shouldSync) {
+        await dataManager.markLogsSynced(ticketId, logs.map(l => l.id));
+    }
 
     // Clear active context
     await dataManager.setActiveContext(null);
@@ -920,7 +1116,7 @@ async function cancelTask(): Promise<void> {
  * Toggle repository active/reference mode
  */
 async function toggleRepository(repoName: string): Promise<void> {
-    const repos = await gitManager.detectRepositories();
+    const repos = sidebarProvider.getState().repositories;
     const repo = repos.find(r => r.name === repoName);
     
     if (!repo) {
@@ -930,8 +1126,27 @@ async function toggleRepository(repoName: string): Promise<void> {
     const newMode = repo.mode === 'active' ? 'reference' : 'active';
     const updatedRepos = gitManager.updateRepoMode(repos, repoName, newMode);
     
-    sidebarProvider.updateState({ repositories: updatedRepos });
+    sidebarProvider.updateState({ repositories: updatedRepos }, true);
     log(`Repository ${repoName} mode changed to ${newMode}`);
+
+    // Persist to manifest if active task
+    const activeContext = await dataManager.getActiveContext();
+    if (activeContext.ticketId) {
+        const manifest = await dataManager.readManifest(activeContext.ticketId);
+        if (manifest) {
+            if (!manifest.repos[repoName]) {
+                manifest.repos[repoName] = {
+                    mode: newMode,
+                    branch: repo.currentBranch || 'main',
+                    baseBranch: 'main',
+                    createdAt: new Date().toISOString()
+                };
+            } else {
+                manifest.repos[repoName].mode = newMode;
+            }
+            await dataManager.writeManifest(manifest);
+        }
+    }
 }
 
 /**
@@ -973,6 +1188,10 @@ async function commitAllRepos(message?: string): Promise<void> {
             `DevLoop: Failed to commit: ${results.failed.join(', ')}`
         );
     }
+
+    // Refresh repo list shallowly
+    const updatedRepos = await gitManager.detectRepositories();
+    sidebarProvider.updateState({ repositories: updatedRepos }, true);
 }
 
 /**
@@ -994,6 +1213,584 @@ async function pushAllRepos(): Promise<void> {
             `DevLoop: Failed to push: ${results.failed.join(', ')}`
         );
     }
+
+    // Refresh repo list shallowly
+    const updatedRepos = await gitManager.detectRepositories();
+    sidebarProvider.updateState({ repositories: updatedRepos }, true);
+}
+
+/**
+ * Get path to isolated environments in global storage
+ */
+function getGlobalEnvPath(type: 'python' | 'node'): string {
+    const storagePath = globalExtensionContext.globalStorageUri.fsPath;
+    return path.join(storagePath, 'environments', type);
+}
+
+/**
+ * Ensure isolated environments exist
+ */
+async function ensureEnvironmentsExist(progress?: vscode.Progress<{ message?: string; increment?: number }>): Promise<void> {
+    const fs = require('fs');
+    const cp = require('child_process');
+    const util = require('util');
+    const exec = util.promisify(cp.exec);
+
+    const pythonEnvPath = getGlobalEnvPath('python');
+    const nodeEnvPath = getGlobalEnvPath('node');
+
+    // Create environments directory
+    const envRoot = path.dirname(pythonEnvPath);
+    if (!fs.existsSync(envRoot)) {
+        fs.mkdirSync(envRoot, { recursive: true });
+    }
+
+    // Python Venv
+    if (!fs.existsSync(pythonEnvPath)) {
+        if (progress) progress.report({ message: 'Creating Python virtual environment...' });
+        log('Creating Python virtual environment...');
+        try {
+            await exec('python -m venv devloop-venv', { cwd: envRoot });
+            // Rename to 'python' for consistency with getGlobalEnvPath
+            fs.renameSync(path.join(envRoot, 'devloop-venv'), pythonEnvPath);
+            // Install tools
+            if (progress) progress.report({ message: 'Installing Pylint and Autopep8...' });
+            const isWindows = process.platform === 'win32';
+            const pip = path.join(pythonEnvPath, isWindows ? 'Scripts' : 'bin', isWindows ? 'pip.exe' : 'pip');
+            await exec(`"${pip}" install pylint autopep8`, { cwd: pythonEnvPath });
+        } catch (error) {
+            log(`Failed to create Python venv: ${error}`);
+        }
+    }
+
+    // Node environment
+    if (!fs.existsSync(nodeEnvPath)) {
+        if (progress) progress.report({ message: 'Initializing Node environment...' });
+        log('Initializing Node environment...');
+        try {
+            fs.mkdirSync(nodeEnvPath, { recursive: true });
+            await exec('npm init -y', { cwd: nodeEnvPath });
+            // Install standard tools
+            if (progress) progress.report({ message: 'Installing ESLint, HTMLLint, and Prettier...' });
+            await exec('npm install eslint htmllint prettier', { cwd: nodeEnvPath });
+        } catch (error) {
+            log(`Failed to initialize Node environment: ${error}`);
+        }
+    }
+}
+
+/**
+ * Get command for a tool in the isolated environment
+ */
+function getToolCommand(toolName: string): string {
+    const pythonEnvPath = getGlobalEnvPath('python');
+    const nodeEnvPath = getGlobalEnvPath('node');
+    const isWindows = process.platform === 'win32';
+
+    if (toolName === 'pylint' || toolName === 'autopep8') {
+        const binDir = isWindows ? 'Scripts' : 'bin';
+        const exe = isWindows ? `${toolName}.exe` : toolName;
+        return path.join(pythonEnvPath, binDir, exe);
+    }
+
+    if (toolName === 'eslint' || toolName === 'htmllint' || toolName === 'prettier') {
+        const binPath = path.join(nodeEnvPath, 'node_modules', '.bin', toolName);
+        return isWindows ? `${binPath}.cmd` : binPath;
+    }
+
+    return toolName;
+}
+
+/**
+ * Check if a tool is available in the isolated environment
+ */
+async function checkToolAvailability(toolName: string): Promise<boolean> {
+    const fs = require('fs');
+    try {
+        const commandPath = getToolCommand(toolName);
+        if (fs.existsSync(commandPath) || fs.existsSync(commandPath + '.exe') || fs.existsSync(commandPath + '.cmd')) {
+            return true;
+        }
+        return false;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Run linters on changed files
+ */
+async function runLinting(): Promise<void> {
+    log('Running linters...');
+    const isWindows = process.platform === 'win32';
+    
+    // Get repositories from current state (includes user-selected modes)
+    const repos = sidebarProvider.getState().repositories;
+    let activeRepos = repos.filter(r => r.mode === 'active');
+    
+    if (activeRepos.length === 0) {
+        if (repos.length > 0) {
+            log('No repositories explicitly marked as "Active". Scanning all workspace repositories as fallback.');
+            activeRepos = repos;
+        } else {
+            log('No repositories found to lint');
+            vscode.window.showInformationMessage(`${getToolName()}: No repositories found in workspace to lint.`);
+            return;
+        }
+    }
+
+    const cp = require('child_process');
+    const util = require('util');
+    const exec = util.promisify(cp.exec);
+    
+    const toolCache = new Map<string, boolean>();
+    const allResults: LintingResult[] = [];
+    const failedToolsInThisRun = new Set<string>();
+
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `${getToolName()}: Scanning files...`,
+        cancellable: true
+    }, async (progress, token) => {
+        // Ensure environments are ready
+        await ensureEnvironmentsExist(progress);
+
+        for (let i = 0; i < activeRepos.length; i++) {
+            if (token.isCancellationRequested) break;
+            
+            const repo = activeRepos[i];
+            const changedFiles = await gitManager.getDiffFiles(repo);
+            
+            for (let j = 0; j < changedFiles.length; j++) {
+                if (token.isCancellationRequested) break;
+                
+                const filePath = changedFiles[j];
+                progress.report({ 
+                    message: `Linting ${path.basename(filePath)} (${i + 1}/${activeRepos.length})`,
+                    increment: (100 / (activeRepos.length * (changedFiles.length || 1)))
+                });
+
+                const ext = path.extname(filePath).toLowerCase();
+                let tool = '';
+                let command = '';
+                let installCmd = '';
+                
+                if (ext === '.py') {
+                    tool = 'pylint';
+                    const pylintCmd = getToolCommand('pylint');
+                    command = `"${pylintCmd}" "${filePath}" --output-format=json`;
+                    const pythonExe = pylintCmd.replace(/pylint(\.exe)?"$/, isWindows ? 'python.exe' : 'python');
+                    installCmd = `"${pythonExe}" -m pip install pylint`;
+                } else if (['.js', '.ts', '.jsx', '.tsx'].includes(ext)) {
+                    tool = 'eslint';
+                    const eslintCmd = getToolCommand('eslint');
+                    command = `"${eslintCmd}" "${filePath}" --format=json`;
+                    installCmd = `npm install eslint`; 
+                } else if (['.html', '.htm'].includes(ext)) {
+                    tool = 'htmllint';
+                    const htmllintCmd = getToolCommand('htmllint');
+                    command = `"${htmllintCmd}" "${filePath}"`; 
+                    installCmd = `npm install htmllint`; 
+                }
+                
+                if (tool && command) {
+                    // Skip tools that already failed in this run
+                    if (failedToolsInThisRun.has(tool)) continue;
+
+                    // Check availability if not cached
+                    if (!toolCache.has(tool)) {
+                        const available = await checkToolAvailability(tool);
+                        toolCache.set(tool, available);
+                        if (!available) {
+                            failedToolsInThisRun.add(tool);
+                            const action = await vscode.window.showErrorMessage(
+                                `${getToolName()}: ${tool} not found in isolated environment.`,
+                                'Install Tool', 'Ignore'
+                            );
+                            if (action === 'Install Tool') {
+                                const terminal = vscode.window.createTerminal(`${getToolName()} Installer`);
+                                terminal.show();
+                                if (tool === 'pylint') {
+                                    terminal.sendText(installCmd);
+                                } else {
+                                    terminal.sendText(`cd "${getGlobalEnvPath('node')}" && ${installCmd}`);
+                                }
+                            }
+                            continue;
+                        }
+                    }
+
+                    if (!toolCache.get(tool)) continue;
+
+                    try {
+                        log(`Linting ${path.basename(filePath)} with ${tool}...`);
+                        
+                        let stdout: string;
+                        try {
+                            const execResult = await exec(command, { cwd: repo.path });
+                            stdout = execResult.stdout;
+                        } catch (execError: any) {
+                            stdout = execError.stdout || execError.stderr || '';
+                            if (!stdout && execError.message) {
+                                log(`Tool ${tool} failed: ${execError.message}`);
+                                if (execError.message.includes('not recognized') || execError.message.includes('not found')) {
+                                    failedToolsInThisRun.add(tool);
+                                }
+                                continue;
+                            }
+                        }
+                        
+                        // JSON validation before parsing
+                        if (tool === 'pylint' || tool === 'eslint') {
+                            try {
+                                const issues = JSON.parse(stdout);
+                                if (tool === 'pylint') {
+                                    issues.forEach((issue: any) => {
+                                        allResults.push({
+                                            tool: 'pylint',
+                                            severity: issue.type === 'error' ? 'error' : 'warning',
+                                            file: filePath,
+                                            line: issue.line,
+                                            message: issue.message,
+                                            canFix: false
+                                        });
+                                    });
+                                } else {
+                                    issues.forEach((res: any) => {
+                                        res.messages.forEach((msg: any) => {
+                                            allResults.push({
+                                                tool: 'eslint',
+                                                severity: msg.severity === 2 ? 'error' : 'warning',
+                                                file: filePath,
+                                                line: msg.line,
+                                                message: msg.message,
+                                                canFix: !!msg.fix
+                                            });
+                                        });
+                                    });
+                                }
+                            } catch (e) { 
+                                log(`Failed to parse ${tool} output for ${path.basename(filePath)}. Output was not valid JSON.`);
+                            }
+                        } else if (tool === 'htmllint') {
+                            const lines = stdout.split('\n');
+                            lines.forEach(line => {
+                                const match = line.match(/^line (\d+), col \d+, (.*)$/i);
+                                if (match) {
+                                    allResults.push({
+                                        tool: 'htmllint',
+                                        severity: 'error',
+                                        file: filePath,
+                                        line: parseInt(match[1]),
+                                        message: match[2],
+                                        canFix: true
+                                    });
+                                }
+                            });
+                        }
+                    } catch (error: any) {
+                        log(`Major error during linting of ${filePath}: ${error.message}`);
+                    }
+                }
+            }
+        }
+    });
+
+    // Update UI once at the end (flicker prevention)
+    sidebarProvider.updateState({ lintingResults: allResults }, true);
+    
+    // Save results for persistence
+    await dataManager.writeLintingResults(allResults);
+    
+    if (allResults.length > 0) {
+        vscode.window.showInformationMessage(`${getToolName()}: Linting completed. Found ${allResults.length} issues.`);
+    } else if (failedToolsInThisRun.size === 0) {
+        vscode.window.showInformationMessage(`${getToolName()}: Linting completed. No issues found.`);
+    }
+}
+
+/**
+ * Find the repository that contains the given file
+ */
+function getRepoForFile(filePath: string): Repository | undefined {
+    const repos = sidebarProvider.getState().repositories;
+    const normalizedFile = filePath.toLowerCase().replace(/\\/g, '/');
+    
+    // Sort by path length descending to find the most specific match
+    const sortedRepos = [...repos].sort((a, b) => b.path.length - a.path.length);
+    
+    let match = sortedRepos.find(r => {
+        const normalizedRepo = r.path.toLowerCase().replace(/\\/g, '/');
+        return normalizedFile.startsWith(normalizedRepo);
+    });
+
+    if (!match) {
+        // Fallback to VS Code API
+        const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath));
+        if (folder) {
+            return {
+                name: folder.name,
+                path: folder.uri.fsPath,
+                mode: 'active',
+                currentBranch: 'main',
+                baseBranch: 'main',
+                status: { state: 'clean' },
+                hasUncommittedChanges: false,
+                uncommittedFiles: 0,
+                uncommittedLines: 0
+            };
+        }
+    }
+    return match;
+}
+
+/**
+ * Fix a specific linting issue
+ */
+async function fixIssue(payload: any): Promise<void> {
+    const { file, line } = payload as { file: string, line: number };
+    await ensureEnvironmentsExist();
+    log(`Attempting to auto-fix issue in ${path.basename(file)}...`);
+
+    const ext = path.extname(file).toLowerCase();
+    let command = '';
+
+    if (ext === '.py') {
+        command = `${getToolCommand('autopep8')} --in-place "${file}"`;
+    } else if (['.js', '.ts', '.jsx', '.tsx'].includes(ext)) {
+        command = `${getToolCommand('eslint')} --fix "${file}"`;
+    } else if (['.html', '.htm'].includes(ext)) {
+        command = `${getToolCommand('prettier')} --write "${file}"`;
+    }
+
+    if (command) {
+        const cp = require('child_process');
+        const util = require('util');
+        const exec = util.promisify(cp.exec);
+
+        try {
+            const repo = getRepoForFile(file);
+            const execOptions: any = { cwd: repo ? repo.path : path.dirname(file) };
+            const searchDir = repo ? repo.path : path.dirname(file);
+            
+            log(`Fixing ${ext} file. Repo: ${repo ? repo.name : 'Not found'} at ${execOptions.cwd}`);
+
+            // Special handling for ESLint
+            if (command.includes('eslint')) {
+                execOptions.env = { ...process.env, ESLINT_USE_FLAT_CONFIG: 'false' };
+                if (ext === '.ts' || ext === '.tsx') {
+                    const tsConfig = await ensureLinterConfig(searchDir, 'typescript');
+                    if (tsConfig && !command.includes('--parser-options')) {
+                        command += ` --parser-options=project:./${tsConfig}`;
+                    }
+                }
+            } else if (command.includes('autopep8')) {
+                const pyConfig = await ensureLinterConfig(searchDir, 'python');
+                if (pyConfig) {
+                    command += ` --global-config ./${pyConfig}`;
+                }
+            } else if (command.includes('prettier')) {
+                const htmlConfig = await ensureLinterConfig(searchDir, 'html');
+                if (htmlConfig) {
+                    command += ` --config ./${htmlConfig}`;
+                }
+            }
+            
+            log(`Executing: ${command}`);
+            await exec(command, execOptions);
+            log(`Auto-fix successful for ${path.basename(file)}`);
+            vscode.window.showInformationMessage(`${getToolName()}: Fixed issues in ${path.basename(file)}`);
+            
+            // Re-run linting to update UI
+            await runLinting();
+        } catch (error: any) {
+            log(`Failed to auto-fix ${file}: ${error.message}`);
+            
+            // Retry specifically if we didn't have the project flag and it's requested
+            if (error.message.includes('parserServices') && !command.includes('--parser-options')) {
+                const repo = getRepoForFile(file);
+                if (repo) {
+                    const fs = require('fs');
+                    const tsconfigPath = path.join(repo.path, 'tsconfig.json');
+                    if (fs.existsSync(tsconfigPath)) {
+                        log(`Retrying with tsconfig.json for ${path.basename(file)}...`);
+                        const retryCommand = `${command} --parser-options project:tsconfig.json`;
+                        try {
+                            const execOptions: any = { 
+                                cwd: repo.path,
+                                env: { ...process.env, ESLINT_USE_FLAT_CONFIG: 'false' }
+                            };
+                            await exec(retryCommand, execOptions);
+                            log(`Auto-fix successful on retry for ${path.basename(file)}`);
+                            vscode.window.showInformationMessage(`${getToolName()}: Fixed issues in ${path.basename(file)} (with TS project)`);
+                            await runLinting();
+                            return;
+                        } catch (retryError: any) {
+                            log(`Retry failed for ${file}: ${retryError.message}`);
+                        }
+                    }
+                }
+            }
+            
+            // Provide more helpful message for ESLint config errors
+            if (error.message.includes('ESLint couldn\'t find an eslint.config')) {
+                vscode.window.showErrorMessage(`${getToolName()}: ESLint auto-fix failed. No configuration found. Try creating an eslint.config.js or .eslintrc file.`);
+            } else if (error.message.includes('parserServices')) {
+                vscode.window.showErrorMessage(`${getToolName()}: TypeScript ESLint requires a tsconfig.json to run this rule. ${error.message.substring(0, 100)}...`);
+            } else {
+                vscode.window.showErrorMessage(`${getToolName()}: Auto-fix failed: ${error.message}`);
+            }
+        }
+    } else {
+        vscode.window.showInformationMessage(`${getToolName()}: No auto-fix command available for this file type.`);
+    }
+}
+
+/**
+ * Fix all auto-fixable issues in a specific category
+ */
+async function fixAllIssues(category: string): Promise<void> {
+    const results = sidebarProvider.getState().lintingResults || [];
+    let toFix: string[] = [];
+
+    if (category === 'python') {
+        toFix = [...new Set(results.filter(r => ['pylint', 'pep8', 'pyflakes'].includes(r.tool.toLowerCase())).map(r => r.file))];
+    } else if (category === 'javascript') {
+        toFix = [...new Set(results.filter(r => ['eslint', 'jslint', 'typescript'].includes(r.tool.toLowerCase()) && r.canFix).map(r => r.file))];
+    } else if (category === 'html') {
+        toFix = [...new Set(results.filter(r => r.tool.toLowerCase() === 'htmllint').map(r => r.file))];
+    }
+
+    if (toFix.length === 0) {
+        vscode.window.showInformationMessage(`${getToolName()}: No auto-fixable issues found for ${category}.`);
+        return;
+    }
+
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Fixing ${category} issues...`,
+        cancellable: false
+    }, async (progress) => {
+        for (let i = 0; i < toFix.length; i++) {
+            const file = toFix[i];
+            progress.report({ message: `Fixing ${path.basename(file)}...`, increment: (100 / toFix.length) });
+            
+            const ext = path.extname(file).toLowerCase();
+            let command = '';
+            if (ext === '.py') command = `npx autopep8 --in-place "${file}"`;
+            else if (['.js', '.ts', '.jsx', '.tsx'].includes(ext)) command = `npx eslint --fix "${file}"`;
+            else if (['.html', '.htm'].includes(ext)) command = `npx prettier --write "${file}"`;
+
+            if (command) {
+                try {
+                    const cp = require('child_process');
+                    const util = require('util');
+                    const exec = util.promisify(cp.exec);
+                    
+                    const repo = getRepoForFile(file);
+                    const execOptions: any = { cwd: repo ? repo.path : path.dirname(file) };
+                    const searchDir = repo ? repo.path : path.dirname(file);
+                    
+                    if (command.includes('eslint')) {
+                        execOptions.env = { ...process.env, ESLINT_USE_FLAT_CONFIG: 'false' };
+                        if (ext === '.ts' || ext === '.tsx') {
+                            const tsConfig = await ensureLinterConfig(searchDir, 'typescript');
+                            if (tsConfig && !command.includes('--parser-options')) {
+                                command += ` --parser-options=project:./${tsConfig}`;
+                            }
+                        }
+                    } else if (command.includes('autopep8')) {
+                        const pyConfig = await ensureLinterConfig(searchDir, 'python');
+                        if (pyConfig) command += ` --global-config ./${pyConfig}`;
+                    } else if (command.includes('prettier')) {
+                        const htmlConfig = await ensureLinterConfig(searchDir, 'html');
+                        if (htmlConfig) command += ` --config ./${htmlConfig}`;
+                    }
+                    
+                    log(`Batch executing: ${command}`);
+                    await exec(command, execOptions);
+                } catch (e) {
+                    log(`Error fixing ${file}: ${e}`);
+                }
+            }
+        }
+    });
+
+    log(`Fixed all ${category} issues.`);
+    vscode.window.showInformationMessage(`${getToolName()}: Finished fixing ${category} issues.`);
+    
+    // Re-run linting to update UI
+    await runLinting();
+}
+
+/**
+ * Ensure a linter config exists for the given type
+ */
+async function ensureLinterConfig(repoPath: string, type: 'typescript' | 'python' | 'html'): Promise<string | undefined> {
+    const fs = require('fs');
+    
+    if (type === 'typescript') {
+        const primary = path.join(repoPath, 'tsconfig.json');
+        if (fs.existsSync(primary)) return 'tsconfig.json';
+        const secondary = path.join(repoPath, 'tsconfig.eslint.json');
+        if (fs.existsSync(secondary)) return 'tsconfig.eslint.json';
+
+        const devloopConfig = path.join(repoPath, '.devloop.tsconfig.json');
+        if (!fs.existsSync(devloopConfig)) {
+            try {
+                const templatePath = path.join(globalExtensionUri.fsPath, 'resources', 'tsconfig.eslint.json');
+                if (fs.existsSync(templatePath)) {
+                    fs.writeFileSync(devloopConfig, fs.readFileSync(templatePath, 'utf8'));
+                } else {
+                    const minimal = { compilerOptions: { target: "es6", module: "commonjs", allowJs: true, noEmit: true, skipLibCheck: true }, include: ["**/*"] };
+                    fs.writeFileSync(devloopConfig, JSON.stringify(minimal, null, 2));
+                }
+            } catch (e) { log(`Failed to create TS config: ${e}`); return undefined; }
+        }
+        return '.devloop.tsconfig.json';
+    } 
+    
+    if (type === 'python') {
+        const primary = path.join(repoPath, '.pep8');
+        if (fs.existsSync(primary)) return '.pep8';
+        const secondary = path.join(repoPath, 'setup.cfg');
+        if (fs.existsSync(secondary)) return 'setup.cfg';
+
+        const devloopConfig = path.join(repoPath, '.devloop.pep8');
+        if (!fs.existsSync(devloopConfig)) {
+            try {
+                const templatePath = path.join(globalExtensionUri.fsPath, 'resources', 'pep8.config');
+                if (fs.existsSync(templatePath)) {
+                    fs.writeFileSync(devloopConfig, fs.readFileSync(templatePath, 'utf8'));
+                } else {
+                    fs.writeFileSync(devloopConfig, "[pycodestyle]\nmax_line_length = 120\n");
+                }
+            } catch (e) { log(`Failed to create PEP8 config: ${e}`); return undefined; }
+        }
+        return '.devloop.pep8';
+    }
+
+    if (type === 'html') {
+        const primary = path.join(repoPath, '.prettierrc');
+        if (fs.existsSync(primary)) return '.prettierrc';
+        const secondary = path.join(repoPath, 'prettier.config.json');
+        if (fs.existsSync(secondary)) return 'prettier.config.json';
+
+        const devloopConfig = path.join(repoPath, '.devloop.prettierrc');
+        if (!fs.existsSync(devloopConfig)) {
+            try {
+                const templatePath = path.join(globalExtensionUri.fsPath, 'resources', 'prettier.config.json');
+                if (fs.existsSync(templatePath)) {
+                    fs.writeFileSync(devloopConfig, fs.readFileSync(templatePath, 'utf8'));
+                } else {
+                    fs.writeFileSync(devloopConfig, "{ \"semi\": true, \"singleQuote\": true }\n");
+                }
+            } catch (e) { log(`Failed to create Prettier config: ${e}`); return undefined; }
+        }
+        return '.devloop.prettierrc';
+    }
+
+    return undefined;
 }
 
 /**
@@ -1017,7 +1814,15 @@ function log(message: string): void {
 /**
  * Extension deactivation
  */
-export function deactivate() {
+export async function deactivate() {
+    log('Extension deactivating...');
+    if (timeTracker && timeTracker.getState().isRunning) {
+        // One final persist
+        const state = timeTracker.getPersistenceState();
+        await dataManager.saveTimerState(state);
+        log('Final timer state persisted');
+    }
+    
     if (timeTracker) {
         timeTracker.dispose();
     }

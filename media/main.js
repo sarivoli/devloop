@@ -20,6 +20,7 @@
     // Store state
     let timerInterval = null;
     let currentSeconds = window.dashboardState?.timeTracker?.elapsedSeconds || 0;
+    let searchDebounce = null;
 
     /**
      * Send message to extension host
@@ -34,13 +35,20 @@
         }
     };
 
-    /**
-     * Toggle widget collapse state
-     */
-    window.toggleWidget = function(widgetId) {
+    window.toggleWidget = function(widgetId, event) {
+        if (event) {
+            // If the click was on a button or something interactive, don't toggle
+            if (event.target.closest('vscode-button') || event.target.closest('vscode-checkbox') || event.target.closest('vscode-text-field')) {
+                console.log('DevLoop: Suppressing accordion toggle for interactive element');
+                return;
+            }
+        }
+        
+        console.log('DevLoop: Toggling widget:', widgetId);
         const widget = document.getElementById(widgetId);
         if (widget) {
             widget.classList.toggle('collapsed');
+            console.log('DevLoop: New collapsed state:', widget.classList.contains('collapsed'));
         }
     };
 
@@ -128,8 +136,79 @@
                 }
                 break;
 
-            case 'updateDashboard':
-                // Full dashboard refresh would reload the webview
+            case 'updatePanel':
+                const container = document.getElementById(message.containerId);
+                if (container) {
+                    // Preserve focus
+                    const activeElementId = document.activeElement ? document.activeElement.id : null;
+                    const selectionStart = document.activeElement ? document.activeElement.selectionStart : null;
+                    const selectionEnd = document.activeElement ? document.activeElement.selectionEnd : null;
+
+                    // Preserve scroll position if it's the issue list
+                    const issueList = container.querySelector('.issue-list');
+                    const scrollTop = issueList ? issueList.scrollTop : 0;
+                    
+                    container.innerHTML = message.html;
+                    
+                    // Sync values for web components which might not react to innerHTML change correctly
+                    const searchInput = container.querySelector('#lint-search');
+                    if (searchInput) {
+                        // The value from message.html might not be enough for a living web component
+                        const stateValue = window.dashboardState.searchQuery || '';
+                        if (searchInput.value !== stateValue) {
+                            searchInput.value = stateValue;
+                        }
+                    }
+                    
+                    // Restore focus
+                    if (activeElementId) {
+                        const newElement = document.getElementById(activeElementId);
+                        if (newElement) {
+                            newElement.focus();
+                            if (selectionStart !== null && selectionEnd !== null) {
+                                try {
+                                    newElement.setSelectionRange(selectionStart, selectionEnd);
+                                } catch (e) {}
+                            }
+                        }
+                    }
+                    
+                    // Restore scroll position
+                    const newIssueList = container.querySelector('.issue-list');
+                    if (newIssueList) newIssueList.scrollTop = scrollTop;
+                    
+                    // Auto-scroll to highlighted issue if any
+                    const highlighted = container.querySelector('.issue-item.highlight');
+                    if (highlighted) {
+                        setTimeout(() => {
+                            highlighted.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        }, 100);
+                    }
+                }
+                break;
+            
+            case 'updateBadge':
+                const badge = document.getElementById(message.containerId);
+                if (badge) {
+                    badge.textContent = message.count;
+                }
+                break;
+            
+            case 'updateState':
+                window.dashboardState = message.state;
+                // Sync search input if it exists
+                const searchField = document.getElementById('lint-search');
+                if (searchField) {
+                    const stateQuery = window.dashboardState.searchQuery || '';
+                    if (searchField.value !== stateQuery) {
+                        searchField.value = stateQuery;
+                    }
+                }
+                
+                // Switch tab if activeMainTab changed
+                if (window.dashboardState.activeMainTab) {
+                    switchTab(window.dashboardState.activeMainTab);
+                }
                 break;
 
             case 'showNotification':
@@ -176,69 +255,104 @@
             console.log('DevLoop: Timer initialized:', currentSeconds);
         }
 
-        // Add event listeners for all vscode-button elements
-        setupButtonListeners();
+        // Add event listeners for message elements
+        setupMessageListeners();
         setupTabListeners();
 
         console.log('DevLoop: Dashboard initialized successfully');
     });
 
     /**
-     * Setup button click listeners
-     * vscode-button web components need event listeners, onclick attributes don't work reliably
+     * Setup message click listeners
+     * Elements with data-msg-type will send messages to extension
      */
-    function setupButtonListeners() {
-        console.log('DevLoop: Setting up button listeners...');
+    function setupMessageListeners() {
+        console.log('DevLoop: Setting up centralized event delegation...');
         
-        // Use event delegation on document for all button clicks
         document.addEventListener('click', function(event) {
-            const button = event.target.closest('vscode-button');
-            if (button) {
-                console.log('DevLoop: Button clicked:', button);
+            // 1. Handle Widget Header Toggle
+            const header = event.target.closest('.widget-header');
+            if (header) {
+                // If the click was on a button or something interactive inside the header, don't toggle
+                if (event.target.closest('vscode-button') || event.target.closest('vscode-checkbox') || event.target.closest('vscode-text-field')) {
+                    console.log('DevLoop: Suppressing accordion toggle for interactive element');
+                } else {
+                    const widget = header.closest('.widget');
+                    if (widget && widget.id) {
+                        toggleWidget(widget.id, event);
+                        return; // Handled
+                    }
+                }
+            }
+
+            // 2. Handle Tab Switching
+            const tab = event.target.closest('.tab');
+            if (tab) {
+                const tabName = tab.getAttribute('data-tab');
+                const msgType = tab.getAttribute('data-msg-type');
                 
-                // Check for data attributes first (preferred)
-                const msgType = button.getAttribute('data-msg-type');
+                if (tabName) {
+                    switchTab(tabName);
+                }
+                
+                // If it ALSO has a message type (like sub-tabs), fall through to message handling
+                if (!msgType) return; 
+            }
+
+            // 3. Handle data-msg-type Messaging
+            const target = event.target.closest('[data-msg-type]');
+            if (target) {
+                const msgType = target.getAttribute('data-msg-type');
                 if (msgType) {
+                    console.log('DevLoop: Handing message click:', msgType);
+                    
+                    // Add visual feedback
+                    target.classList.add('click-feedback');
+                    setTimeout(() => target.classList.remove('click-feedback'), 200);
+
                     let payload = undefined;
-                    const payloadStr = button.getAttribute('data-msg-payload');
+                    const payloadStr = target.getAttribute('data-msg-payload');
                     
                     if (payloadStr) {
                         try {
                             payload = JSON.parse(payloadStr);
                         } catch (e) {
-                            console.error('DevLoop: Error parsing payload:', e);
+                            payload = payloadStr;
                         }
                     }
                     
-                    console.log('DevLoop: Sending message via data attributes:', msgType, payload);
-                    
-                     if (msgType === 'commitAll' && !payload) {
+                    if (msgType === 'commitAll' && !payload) {
                         sendMessage(msgType, getCommitMessage());
                     } else {
                         sendMessage(msgType, payload);
                     }
                     return;
                 }
-
-                // Fallback to onclick parsing (legacy)
-                const onclick = button.getAttribute('onclick');
-                if (onclick) {
-                    // ... (existing regex logic)
-                    try {
-                        const match = onclick.match(/sendMessage\(['"]([^'"]+)['"](?:,\s*['"]([^'"]*)['"])?\)/);
-                        if (match) {
-                            const type = match[1];
-                            const payload = match[2] || undefined;
-                            sendMessage(type, payload);
-                        }
-                    } catch (error) {
-                         console.error('DevLoop: Error parsing onclick:', error);
-                    }
+            }
+        });
+        
+        // Handle checkbox changes via delegation (CSP safe)
+        document.addEventListener('change', function(event) {
+            const target = event.target.closest('vscode-checkbox[data-msg-type]');
+            if (target) {
+                const msgType = target.getAttribute('data-msg-type');
+                let payload = target.getAttribute('data-msg-payload');
+                
+                if (msgType) {
+                    console.log('DevLoop: Checkbox change:', msgType, payload);
+                    sendMessage(msgType, payload);
                 }
             }
         });
         
-        console.log('DevLoop: Button listeners setup complete');
+        // Search input remains keydown
+        document.addEventListener('keydown', function(event) {
+            if (event.target.id === 'lint-search' && event.key === 'Enter') {
+                sendMessage('searchLint', event.target.value);
+            }
+        });
+        
+        console.log('DevLoop: Event delegation setup complete');
     }
 
     // Override commit button to include message

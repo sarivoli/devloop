@@ -2,7 +2,7 @@
   "name": "devloop-workspace-manager",
   "displayName": "DevLoop",
   "description": "Unified Code Development Workflow & Workspace Orchestration",
-  "version": "0.1.0",
+  "version": "0.2.5",
   "icon": "resources/devloop_logo.png",
   "publisher": "devloop",
   "repository": {

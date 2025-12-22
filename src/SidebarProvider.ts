@@ -1,27 +1,7 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { DashboardState, Repository, LintingResult, ConfigKey, ActivityItem, TimeTrackerState } from './types';
 
-/**
- * Mock data for dashboard panels that aren't fully implemented yet
- */
-const MOCK_LINTING_RESULTS: LintingResult[] = [
-    { tool: 'pep8', severity: 'error', file: 'auth_controller.py', line: 45, message: 'Line too long (140 > 120)', canFix: true },
-    { tool: 'pep8', severity: 'error', file: 'user_service.py', line: 12, message: 'Undefined variable', canFix: false },
-    { tool: 'pyflakes', severity: 'warning', file: 'config.py', line: 78, message: 'Use of print statement (Py2)', canFix: true },
-    { tool: 'eslint', severity: 'warning', file: 'api.js', line: 23, message: 'Unexpected var, use let or const', canFix: true }
-];
-
-const MOCK_CONFIG_KEYS: ConfigKey[] = [
-    { key: 'database.timeout', occurrences: [], referenceCount: 3 },
-    { key: 'cache.redis.host', occurrences: [], referenceCount: 2 },
-    { key: 'auth.token.expiry', occurrences: [], referenceCount: 5 }
-];
-
-const MOCK_ACTIVITY: ActivityItem[] = [
-    { id: '1', type: 'comment', message: 'Comment sent to JIRA-1234', timestamp: new Date(Date.now() - 3600000).toISOString() },
-    { id: '2', type: 'jenkins', message: 'Jenkins job #4521 started', timestamp: new Date(Date.now() - 7200000).toISOString() },
-    { id: '3', type: 'commit', message: 'Committed to 2 repositories', timestamp: new Date(Date.now() - 10800000).toISOString() }
-];
 
 /**
  * Webview Sidebar Provider for DevLoop Dashboard
@@ -49,11 +29,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 sessionStartTime: null
             },
             repositories: [],
-            lintingResults: MOCK_LINTING_RESULTS,
-            configKeys: MOCK_CONFIG_KEYS,
-            activityStream: MOCK_ACTIVITY,
+            lintingResults: [],
+            configKeys: [],
+            activityStream: [],
             activeTicketTotalTime: 0,
             recentTasks: [],
+            activeLintTab: 'python',
             historyStats: { today: 0, thisWeek: 0 }
         };
     }
@@ -66,11 +47,87 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     /**
+     * Get current dashboard state
+     */
+    public getState(): DashboardState {
+        return this.dashboardState;
+    }
+
+    /**
      * Update dashboard state and refresh UI
      */
-    updateState(partial: Partial<DashboardState>): void {
+    public updateState(partial: Partial<DashboardState>, shallow = true): void {
         this.dashboardState = { ...this.dashboardState, ...partial };
-        this.refresh();
+        if (shallow && this._view) {
+            // Send updated state to webview
+            this._view.webview.postMessage({
+                type: 'updateState',
+                state: this.dashboardState
+            });
+
+            // Update Lint Hub if relevant properties changed
+            if (partial.activeLintTab !== undefined || partial.lintingResults !== undefined || partial.searchQuery !== undefined) {
+                this._view.webview.postMessage({
+                    type: 'updatePanel',
+                    containerId: 'linting-hub-body',
+                    html: this.renderLintingHubBody()
+                });
+                
+                // Update badge
+                this._view.webview.postMessage({
+                    type: 'updateBadge',
+                    containerId: 'linting-hub-badge',
+                    count: (this.dashboardState.lintingResults || []).length
+                });
+            }
+            
+            // Update Repository Workspace
+            if (partial.repositories !== undefined || partial.lintingResults !== undefined) {
+                this._view.webview.postMessage({
+                    type: 'updatePanel',
+                    containerId: 'repo-workspace-container',
+                    html: this.renderRepoWorkspace()
+                });
+            }
+
+            // Update Activity Stream
+            if (partial.activityStream !== undefined) {
+                this._view.webview.postMessage({
+                    type: 'updatePanel',
+                    containerId: 'activity-stream-container',
+                    html: this.renderActivityStream()
+                });
+            }
+
+            // Handle Active Task updates
+            if (partial.activeTicket !== undefined || partial.timeTracker !== undefined || partial.projectHealth !== undefined || partial.activeTicketTotalTime !== undefined) {
+                this._view.webview.postMessage({
+                    type: 'updatePanel',
+                    containerId: 'active-task-container',
+                    html: this.renderActiveTaskTab()
+                });
+            }
+
+            // Handle History updates
+            if (partial.recentTasks !== undefined || partial.historyStats !== undefined) {
+                this._view.webview.postMessage({
+                    type: 'updatePanel',
+                    containerId: 'history-tab-container',
+                    html: this.renderHistoryTab()
+                });
+            }
+
+            // Handle Jira Config updates
+            if (partial.configKeys !== undefined || (partial.projectHealth && partial.projectHealth.jira)) {
+                this._view.webview.postMessage({
+                    type: 'updatePanel',
+                    containerId: 'jira-config-container',
+                    html: this.renderJiraConfig()
+                });
+            }
+        } else {
+            this.refresh();
+        }
     }
 
     /**
@@ -178,21 +235,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         <!-- Brand Header (New) -->
         <header class="brand-header">
             <h1 class="brand-title">${state.toolName || 'DevLoop'}</h1>
-            <div class="brand-badge">DWM</div>
+            <div class="brand-badge">Beta</div>
         </header>
 
         <!-- Unified Task Panel (Sticky) -->
         <section class="widget task-panel sticky-panel" id="task-panel">
-            <div class="widget-body">
+            <div class="widget-body" style="padding: 0;">
                 <!-- Tab Navigation -->
                 <div class="tab-nav">
-                    <div class="tab active" data-tab="active-task" onclick="switchTab('active-task')">
+                    <div class="tab ${(!state.activeMainTab || state.activeMainTab === 'active-task') ? 'active' : ''}" data-tab="active-task">
                         <span>Active Task</span>
                     </div>
-                    <div class="tab" data-tab="history" onclick="switchTab('history')">
+                    <div class="tab ${state.activeMainTab === 'history' ? 'active' : ''}" data-tab="history">
                         <span>History</span>
                     </div>
-                    <div class="tab" data-tab="jira-config" onclick="switchTab('jira-config')">
+                    <div class="tab ${state.activeMainTab === 'jira-config' ? 'active' : ''}" data-tab="jira-config">
                         <span>Config</span>
                         ${this.renderJiraConfigIndicator()}
                     </div>
@@ -200,19 +257,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
                 <!-- Tab Content -->
                 <div class="tab-content">
-                    <!-- Active Task Tab (Default) -->
-                    <div class="tab-pane active" id="tab-active-task">
-                        ${this.renderActiveTaskTab()}
+                    <!-- Active Task Tab -->
+                    <div class="tab-pane ${(!state.activeMainTab || state.activeMainTab === 'active-task') ? 'active' : ''}" id="tab-active-task">
+                        <div id="active-task-container">
+                            ${this.renderActiveTaskTab()}
+                        </div>
                     </div>
 
                     <!-- History Tab -->
-                    <div class="tab-pane" id="tab-history">
-                        ${this.renderHistoryTab()}
+                    <div class="tab-pane ${state.activeMainTab === 'history' ? 'active' : ''}" id="tab-history">
+                        <div id="history-tab-container">
+                            ${this.renderHistoryTab()}
+                        </div>
                     </div>
 
                     <!-- Jira Configuration Tab -->
-                    <div class="tab-pane" id="tab-jira-config">
-                        ${this.renderJiraConfig()}
+                    <div class="tab-pane ${state.activeMainTab === 'jira-config' ? 'active' : ''}" id="tab-jira-config">
+                        <div id="jira-config-container">
+                            ${this.renderJiraConfig()}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -222,34 +285,39 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         <!-- Linting Hub Widget -->
         <section class="widget" id="linting-hub">
-            <div class="widget-header" onclick="toggleWidget('linting-hub')">
+            <div class="widget-header">
                 <span>🐛 Linting Hub</span>
-                <vscode-badge>${state.lintingResults.length}</vscode-badge>
-                <span class="chevron">▼</span>
+                <vscode-badge id="linting-hub-badge">${state.lintingResults.length}</vscode-badge>
+                <div style="margin-left: auto; display: flex; gap: 8px; align-items: center;">
+                    <vscode-button appearance="icon" title="Run Linters" data-msg-type="runLinting">
+                        ▶️
+                    </vscode-button>
+                    <span class="chevron">▼</span>
+                </div>
             </div>
-            <div class="widget-body">
-                ${this.renderLintingHub()}
+            <div class="widget-body" id="linting-hub-body">
+                ${this.renderLintingHubBody()}
             </div>
         </section>
 
         <!-- Repository Workspace Widget -->
         <section class="widget" id="repo-workspace">
-            <div class="widget-header" onclick="toggleWidget('repo-workspace')">
+            <div class="widget-header">
                 <span>📂 Repository Workspace</span>
                 <span class="chevron">▼</span>
             </div>
-            <div class="widget-body">
+            <div class="widget-body" id="repo-workspace-container">
                 ${this.renderRepoWorkspace()}
             </div>
         </section>
 
         <!-- Activity Log Widget -->
         <section class="widget" id="activity-stream">
-            <div class="widget-header" onclick="toggleWidget('activity-stream')">
+            <div class="widget-header">
                 <span>📋 Activity Log</span>
                 <span class="chevron">▼</span>
             </div>
-            <div class="widget-body">
+            <div class="widget-body" id="activity-stream-container">
                 ${this.renderActivityStream()}
             </div>
         </section>
@@ -327,8 +395,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         </div>
                     </div>
                     <div class="action-buttons">
-                        <vscode-button appearance="secondary" onclick="sendMessage('validateJira')">Validate</vscode-button>
-                        <vscode-button appearance="secondary" onclick="sendMessage('configureJira')">Settings</vscode-button>
+                        <vscode-button appearance="secondary" data-msg-type="validateJira">Validate</vscode-button>
+                        <vscode-button appearance="secondary" data-msg-type="configureJira">Settings</vscode-button>
                     </div>
                 </div>
             `;
@@ -345,7 +413,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     Configure Jira to enable ticket tracking, time logging, and automated comments.
                 </p>
                 <div class="action-buttons">
-                    <vscode-button onclick="sendMessage('configureJira')" style="width: 100%;">
+                    <vscode-button data-msg-type="configureJira" style="width: 100%;">
                         Configure Jira
                     </vscode-button>
                 </div>
@@ -366,7 +434,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             return `
                 <div class="empty-state">
                     <p>No active ticket</p>
-                    <vscode-button onclick="sendMessage('startTask')">Start New Task</vscode-button>
+                    <vscode-button data-msg-type="startTask">Start New Task</vscode-button>
                 </div>
             `;
         }
@@ -559,10 +627,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </div>
             <div class="time-controls">
                 ${timer.isPaused 
-                    ? `<vscode-button onclick="sendMessage('resumeTimer')">▶️ Resume</vscode-button>`
-                    : `<vscode-button onclick="sendMessage('pauseTimer')">⏸️ Pause</vscode-button>`
+                    ? `<vscode-button data-msg-type="resumeTimer">▶️ Resume</vscode-button>`
+                    : `<vscode-button data-msg-type="pauseTimer">⏸️ Pause</vscode-button>`
                 }
-                <vscode-button appearance="secondary" onclick="sendMessage('stopTimer')">⏹️ Stop</vscode-button>
+                <vscode-button appearance="secondary" data-msg-type="stopTimer">⏹️ Stop</vscode-button>
             </div>
             <div class="stats-grid">
                 <div class="stat-card">
@@ -578,38 +646,119 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Render Linting Hub section
+     * Render the entire Linting Hub body content
      */
-    private renderLintingHub(): string {
-        const results = this.dashboardState.lintingResults;
-        const pythonCount = results.filter(r => ['pep8', 'pyflakes'].includes(r.tool)).length;
-        const jsCount = results.filter(r => r.tool === 'eslint').length;
+    private renderLintingHubBody(): string {
+        return `
+            <div id="linting-tabs-container">
+                ${this.renderLintingTabs()}
+            </div>
+            <div id="linting-search-container">
+                ${this.renderLintingSearch()}
+            </div>
+            <div class="panel-section" id="linting-list-container">
+                ${this.renderLintingList()}
+            </div>
+        `;
+    }
+
+    /**
+     * Render Linting Tabs
+     */
+    private renderLintingTabs(): string {
+        const results = this.dashboardState.lintingResults || [];
+        const activeTab = this.dashboardState.activeLintTab || 'python';
+        
+        const pythonResults = results.filter(r => ['pep8', 'pyflakes', 'pylint'].includes(r.tool.toLowerCase()));
+        const jsResults = results.filter(r => ['eslint', 'jslint', 'typescript'].includes(r.tool.toLowerCase()));
+        const htmlResults = results.filter(r => ['htmllint', 'html'].includes(r.tool.toLowerCase()));
 
         return `
-            <div class="tabs">
-                <div class="tab active" data-tab="python">Python (${pythonCount})</div>
-                <div class="tab" data-tab="javascript">JavaScript (${jsCount})</div>
-            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div class="tabs sub-tabs" style="margin-bottom: 0; flex: 1;">
+                    <div class="tab ${activeTab === 'python' ? 'active' : ''}" data-msg-type="switchLintTab" data-msg-payload="python">Python (${pythonResults.length})</div>
+                    <div class="tab ${activeTab === 'javascript' ? 'active' : ''}" data-msg-type="switchLintTab" data-msg-payload="javascript">JS (${jsResults.length})</div>
+                    <div class="tab ${activeTab === 'html' ? 'active' : ''}" data-msg-type="switchLintTab" data-msg-payload="html">HTML (${htmlResults.length})</div>
+                </div>
+            </div>`;
+    }
+
+    /**
+     * Render Linting Search section
+     */
+    private renderLintingSearch(): string {
+        return `
+            <div style="display: flex; gap: 4px; margin-bottom: 8px;">
+                <vscode-text-field 
+                    id="lint-search"
+                    placeholder="Search file..." 
+                    value="${this.dashboardState.searchQuery || ''}" 
+                    style="flex: 1;">
+                </vscode-text-field>
+                <vscode-button appearance="secondary" data-msg-type="resetLintSearch">
+                    Reset
+                </vscode-button>
+            </div>`;
+    }
+
+    /**
+     * Render Linting List section
+     */
+    private renderLintingList(): string {
+        const results = this.dashboardState.lintingResults || [];
+        const activeTab = this.dashboardState.activeLintTab || 'python';
+        const searchQuery = (this.dashboardState.searchQuery || '').toLowerCase();
+        
+        const pythonResults = results.filter(r => ['pep8', 'pyflakes', 'pylint'].includes(r.tool.toLowerCase()));
+        const jsResults = results.filter(r => ['eslint', 'jslint', 'typescript'].includes(r.tool.toLowerCase()));
+        const htmlResults = results.filter(r => ['htmllint', 'html'].includes(r.tool.toLowerCase()));
+
+        let filteredResults = activeTab === 'python' ? pythonResults 
+                            : activeTab === 'javascript' ? jsResults 
+                            : htmlResults;
+
+        if (searchQuery) {
+            filteredResults = filteredResults.filter(r => 
+                path.basename(r.file).toLowerCase().includes(searchQuery)
+            );
+        }
+
+        return `
             <div class="issue-list">
-                ${results.slice(0, 5).map(issue => `
-                    <div class="issue-item">
-                        <div>
-                            <div class="issue-file">${issue.file}:${issue.line}</div>
-                            <div>
+                ${filteredResults.length > 0 ? filteredResults.slice(0, 50).map(issue => {
+                    const relativePath = vscode.workspace.workspaceFolders 
+                        ? path.relative(vscode.workspace.workspaceFolders[0].uri.fsPath, issue.file)
+                        : issue.file;
+                    const fileName = path.basename(issue.file);
+                    const isHighlighted = !searchQuery && this.dashboardState.activeFile === issue.file;
+                    const issueId = `issue-${issue.file.replace(/\\/g, '-').replace(/\//g, '-')}-${issue.line}`;
+
+                    return `
+                    <div class="issue-item clickable ${isHighlighted ? 'highlight' : ''}" id="${issueId}" data-msg-type="showIssue" data-msg-payload='${JSON.stringify({ file: issue.file.replace(/\\/g, '\\\\'), line: issue.line, noScroll: true })}'>
+                        <div style="flex: 1; overflow: hidden;">
+                            <div class="issue-file" title="${relativePath}">${fileName}:${issue.line}</div>
+                            <div class="issue-msg" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                                 <span class="issue-severity ${issue.severity}">${issue.severity.toUpperCase()}</span>
                                 ${issue.message}
                             </div>
                         </div>
-                        ${issue.canFix 
-                            ? `<vscode-button appearance="icon" onclick="sendMessage('fixIssue', '${issue.file}:${issue.line}')">⚡</vscode-button>`
-                            : `<vscode-button appearance="icon" onclick="sendMessage('showIssue', '${issue.file}:${issue.line}')">🔍</vscode-button>`
-                        }
+                        <div class="issue-actions" style="display: flex; gap: 4px;">
+                            ${issue.canFix 
+                                ? `<vscode-button appearance="icon" title="Auto-fix" data-msg-type="fixIssue" data-msg-payload='${JSON.stringify({ file: issue.file.replace(/\\/g, '\\\\'), line: issue.line })}'>⚡</vscode-button>`
+                                : ''
+                            }
+                            <vscode-button appearance="icon" title="Show in editor" data-msg-type="showIssue" data-msg-payload='${JSON.stringify({ file: issue.file.replace(/\\/g, '\\\\'), line: issue.line, noScroll: true })}'>
+                                🔍
+                            </vscode-button>
+                        </div>
                     </div>
-                `).join('')}
+                `;}).join('') : '<div class="empty-state">No issues found in this category</div>'}
             </div>
-            <vscode-button appearance="primary" style="width: 100%; margin-top: 12px;" onclick="sendMessage('fixAll')">
-                Fix All (${results.filter(r => r.canFix).length})
-            </vscode-button>
+            ${filteredResults.length > 0 ? `
+                <vscode-button appearance="primary" style="width: 100%; margin-top: 12px;" data-msg-type="fixAll" data-msg-payload="${activeTab}">
+                    Fix All ${activeTab.toUpperCase()} (${filteredResults.filter(r => r.canFix).length})
+                </vscode-button>
+            ` : ''}
         `;
     }
 
@@ -618,30 +767,46 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
      */
     private renderRepoWorkspace(): string {
         const repos = this.dashboardState.repositories;
+        const lintCount = (this.dashboardState.lintingResults || []).length;
 
         if (repos.length === 0) {
             return `
                 <div class="empty-state">
                     <p>No repositories detected</p>
-                    <vscode-button appearance="secondary" onclick="sendMessage('refreshRepos')">Scan Workspace</vscode-button>
+                    <vscode-button appearance="secondary" data-msg-type="refreshRepos">Scan Workspace</vscode-button>
                 </div>
             `;
         }
 
         return `
+            ${lintCount > 0 ? `
+                <div class="warning-banner" style="margin-bottom: 12px; padding: 10px; background: rgba(255, 165, 0, 0.1); border-left: 3px solid orange; border-radius: 4px;">
+                    <div style="font-weight: bold; color: orange; font-size: 11px; margin-bottom: 4px;">⚠️ LINT ISSUES DETECTED</div>
+                    <div style="font-size: 10px; opacity: 0.9;">There are ${lintCount} unaddressed linting issues. It is not recommended to commit changes until these are resolved.</div>
+                </div>
+            ` : ''}
             <div class="repo-list">
                 ${repos.map(repo => `
-                    <div class="repo-item">
+                    <div class="repo-item" title="${repo.path}">
                         <vscode-checkbox 
                             ${repo.mode === 'active' ? 'checked' : ''} 
-                            onchange="sendMessage('toggleRepo', '${repo.name}')">
+                            data-msg-type="toggleRepo"
+                            data-msg-payload="${repo.name}">
                             ${repo.name}
                         </vscode-checkbox>
-                        <span class="repo-branch">[${repo.currentBranch}]</span>
+                        <div style="display: flex; flex-direction: column; gap: 2px;">
+                            <span class="repo-branch">[${repo.isStatic ? 'Static Folder' : repo.currentBranch}]</span>
+                            ${repo.hasUncommittedChanges ? `<span style="font-size: 10px; color: var(--vscode-charts-yellow);">Unsaved changes (${repo.uncommittedFiles})</span>` : ''}
+                        </div>
                         <span class="status-dot ${repo.status.state === 'clean' ? 'green' : 'yellow'}"></span>
                     </div>
                 `).join('')}
             </div>
+
+            <vscode-button appearance="secondary" data-msg-type="prepareWorkspace" style="width: 100%; margin-top: 8px;">
+                🛠️ Prepare workspace for the task
+            </vscode-button>
+
             <vscode-text-area 
                 id="commit-message" 
                 placeholder="Enter commit message..." 
@@ -649,10 +814,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 style="width: 100%; margin-top: 12px;">
             </vscode-text-area>
             <div class="action-buttons">
-                <vscode-button onclick="sendMessage('commitAll')">💾 Commit</vscode-button>
-                <vscode-button appearance="secondary" onclick="sendMessage('pushAll')">⬆️ Push</vscode-button>
+                <vscode-button data-msg-type="commitAll">💾 Commit</vscode-button>
+                <vscode-button appearance="secondary" data-msg-type="pushAll">⬆️ Push</vscode-button>
             </div>
-            <vscode-button appearance="primary" style="width: 100%; margin-top: 8px;" onclick="sendMessage('createPRs')">
+            <vscode-button appearance="primary" style="width: 100%; margin-top: 8px;" data-msg-type="createPRs">
                 🔀 Create PRs
             </vscode-button>
         `;
@@ -672,7 +837,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const currentStream = this.dashboardState.activityStream || [];
         const newStream = [item, ...currentStream].slice(0, 50); // Keep last 50 logs
 
-        this.updateState({ activityStream: newStream });
+        this.updateState({ activityStream: newStream }, true);
     }
 
     /**

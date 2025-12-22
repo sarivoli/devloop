@@ -2,7 +2,7 @@
 
 /* Container */
 .container {
-    padding: 0 8px 16px 8px;
+    padding: 0 4px 8px 4px;
 }
 
 /* Brand Header */
@@ -10,8 +10,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 4px;
-    margin-bottom: 4px;
+    padding: 6px 4px;
+    margin-bottom: 2px;
     border-bottom: 1px solid var(--vscode-widget-border, #3e3e42);
 }
 
@@ -65,7 +65,8 @@
 .widget-header .chevron {
     margin-left: auto;
     font-size: 10px;
-    transition: transform 0.2s;
+    transition: transform 0.2s ease;
+    display: inline-block;
 }
 
 .widget.collapsed .chevron {
@@ -416,8 +417,11 @@
 
 /* Issue List */
 .issue-list {
-    max-height: 200px;
+    height: 300px; /* Fixed height for stability */
+    max-height: 300px;
     overflow-y: auto;
+    border: 1px solid var(--vscode-widget-border, #3e3e42);
+    border-radius: 2px;
 }
 
 .issue-item {
@@ -430,8 +434,21 @@
     justify-content: space-between;
     align-items: flex-start;
     gap: 8px;
+    transition: background 0.2s;
 }
 
+.issue-item.clickable {
+    cursor: pointer;
+}
+
+.issue-item.clickable:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.issue-item.highlight {
+    border-left: 3px solid var(--vscode-textLink-foreground);
+    background: var(--vscode-list-hoverBackground);
+}
 .issue-file {
     color: var(--vscode-textLink-foreground);
     margin-bottom: 2px;
@@ -625,4 +642,45 @@ vscode-button + vscode-button {
 /* Text area */
 vscode-text-area {
     width: 100%;
+}
+
+/* Animations and Feedback */
+@keyframes click-ripple {
+    0% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(0.95); opacity: 0.8; }
+}
+
+.click-feedback {
+    animation: click-ripple 0.1s ease-out;
+}
+
+/* Enhanced Button States */
+vscode-button:active, .tab:active, .issue-item:active {
+    transform: scale(0.98);
+    transition: transform 0.05s ease;
+}
+
+.tab {
+    position: relative;
+    overflow: hidden;
+}
+
+.tab:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: var(--vscode-textLink-foreground);
+}
+
+/* Ripple effect container */
+.ripple-container {
+    position: relative;
+    overflow: hidden;
 }

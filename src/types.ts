@@ -54,6 +54,7 @@ export interface Repository {
     uncommittedFiles: number;
     uncommittedLines: number;
     lastCommitTime?: string;
+    isStatic?: boolean;
 }
 
 export type RepoMode = 'active' | 'reference' | 'inactive';
@@ -92,6 +93,15 @@ export interface TimeTrackerState {
     ticketSnapshot?: TicketSnapshot; // Added for snapshot
 }
 
+export interface TimerPersistenceState {
+    isRunning: boolean;
+    isPaused: boolean;
+    currentTicketId: string | null;
+    elapsedSeconds: number;
+    lastTickTime: string; // ISO string to detect drift
+    ticketSnapshot?: TicketSnapshot;
+}
+
 // ============================================
 // Manifest Types
 // ============================================
@@ -122,6 +132,7 @@ export interface TaskManifest {
     logs: WorkLog[];
     totalLoggedTime: number; // minutes
     lastUpdated?: string;
+    lintingResults?: LintingResult[];
 }
 
 export interface RepoManifestEntry {
@@ -131,6 +142,7 @@ export interface RepoManifestEntry {
     createdAt: string;
     type?: 'branch' | 'tag';
     pinned?: boolean;
+    isStatic?: boolean;
 }
 
 // Removed TimeTrackingData as it is replaced by logs array
@@ -151,6 +163,10 @@ export interface DashboardState {
     configKeys: ConfigKey[];
     activityStream: ActivityItem[];
     recentTasks: RecentTask[];
+    activeLintTab?: 'python' | 'javascript' | 'html';
+    activeMainTab?: 'active-task' | 'history' | 'jira-config';
+    activeFile?: string;
+    searchQuery?: string;
     historyStats: { today: number; thisWeek: number };
 }
 

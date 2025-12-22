@@ -123,9 +123,25 @@ export class GitManager {
                     if (repo) {
                         repos.push(repo);
                     }
+                } else {
+                    const repo = await this.getRepoInfo(folder.uri.fsPath, true);
+                    if (repo) {
+                        repos.push(repo);
+                    }
                 }
             } catch {
-                // Not a git repository
+                // Not a git repository, check if it's a directory
+                try {
+                    const stat = await fs.promises.stat(folder.uri.fsPath);
+                    if (stat.isDirectory()) {
+                        const repo = await this.getRepoInfo(folder.uri.fsPath, true);
+                        if (repo) {
+                            repos.push(repo);
+                        }
+                    }
+                } catch {
+                    // Ignore
+                }
             }
         }
 
@@ -136,11 +152,11 @@ export class GitManager {
     /**
      * Get repository information
      */
-    private async getRepoInfo(repoPath: string): Promise<Repository | null> {
+    private async getRepoInfo(repoPath: string, isStatic: boolean = false): Promise<Repository | null> {
         try {
             const name = path.basename(repoPath);
-            const branch = await this.getCurrentBranch(repoPath);
-            const status = await this.getStatus(repoPath);
+            const branch = isStatic ? 'static' : await this.getCurrentBranch(repoPath);
+            const status = isStatic ? { hasChanges: false, changedFiles: 0 } : await this.getStatus(repoPath);
 
             return {
                 name,
@@ -148,10 +164,11 @@ export class GitManager {
                 currentBranch: branch || 'unknown',
                 baseBranch: 'main',
                 mode: 'inactive',
-                status: { state: status.hasChanges ? 'dirty' : 'clean' },
+                status: { state: isStatic ? 'clean' : (status.hasChanges ? 'dirty' : 'clean') },
                 hasUncommittedChanges: status.hasChanges,
                 uncommittedFiles: status.changedFiles,
-                uncommittedLines: 0
+                uncommittedLines: 0,
+                isStatic
             };
         } catch (error) {
             this.log(`Error getting repo info for ${repoPath}: ${error}`);
@@ -174,11 +191,36 @@ export class GitManager {
     }
 
     /**
-     * Get repository status (simplified)
+     * Get repository status using Git API
      */
     private async getStatus(repoPath: string): Promise<{ hasChanges: boolean; changedFiles: number }> {
-        // Simplified status check - in production would use Git API
-        return { hasChanges: false, changedFiles: 0 };
+        if (this.useMock) {
+            const mock = MOCK_REPOS.find(r => r.path === repoPath);
+            return { 
+                hasChanges: mock?.hasUncommittedChanges || false, 
+                changedFiles: mock?.uncommittedFiles || 0 
+            };
+        }
+
+        try {
+            const git = this.gitExtension?.exports.getAPI(1);
+            if (!git) return { hasChanges: false, changedFiles: 0 };
+
+            const repository = git.getRepository(vscode.Uri.file(repoPath));
+            if (!repository) return { hasChanges: false, changedFiles: 0 };
+
+            const status = repository.state.workingTreeChanges;
+            const indexStatus = repository.state.indexChanges;
+            const totalChanges = status.length + indexStatus.length;
+
+            return {
+                hasChanges: totalChanges > 0,
+                changedFiles: totalChanges
+            };
+        } catch (error) {
+            this.log(`Error getting status for ${repoPath}: ${error}`);
+            return { hasChanges: false, changedFiles: 0 };
+        }
     }
 
     /**
@@ -254,15 +296,52 @@ export class GitManager {
     }
 
     /**
+     * Stash changes in a repository
+     */
+    async stashChanges(repoPath: string, message?: string): Promise<boolean> {
+        this.log(`Stashing changes in ${repoPath}`);
+
+        if (this.useMock) {
+            this.log(`[MOCK] Stashed changes in ${repoPath}`);
+            return true;
+        }
+
+        try {
+            const terminal = vscode.window.createTerminal({
+                name: 'DevLoop Git Stash',
+                cwd: repoPath,
+                hideFromUser: true
+            });
+
+            const stashMsg = message || `DevLoop Auto-stash: ${new Date().toLocaleString()}`;
+            terminal.sendText(`git stash save "${stashMsg}"`);
+            
+            await new Promise(resolve => setTimeout(resolve, 800));
+            terminal.dispose();
+
+            return true;
+        } catch (error) {
+            this.log(`Error stashing changes: ${error}`);
+            return false;
+        }
+    }
+
+    /**
      * Check if repository has uncommitted changes
      */
     async hasUncommittedChanges(repoPath: string): Promise<boolean> {
         if (this.useMock) {
-            return false;
+            const mock = MOCK_REPOS.find(r => r.path === repoPath);
+            return mock?.hasUncommittedChanges || false;
         }
 
-        const status = await this.getStatus(repoPath);
-        return status.hasChanges;
+        try {
+            const status = await this.getStatus(repoPath);
+            return status.hasChanges;
+        } catch (error) {
+            this.log(`Error checking uncommitted changes: ${error}`);
+            return false;
+        }
     }
 
     /**
@@ -378,6 +457,76 @@ export class GitManager {
             }
             return repo;
         });
+    }
+
+    /**
+     * Get list of changed files in a repository (diff)
+     */
+    async getDiffFiles(repo: Repository): Promise<string[]> {
+        if (this.useMock) {
+            return ['src/app.py', 'src/utils.js', 'index.html'];
+        }
+
+        if (repo.isStatic) {
+            return this.getAllFiles(repo.path);
+        }
+
+        try {
+            const git = this.gitExtension?.exports.getAPI(1);
+            if (!git) return [];
+
+            const repository = git.getRepository(vscode.Uri.file(repo.path));
+            if (!repository) return [];
+
+            const changes = [
+                ...repository.state.workingTreeChanges,
+                ...repository.state.indexChanges,
+                ...repository.state.mergeChanges
+            ];
+
+            // Use Set to avoid duplicates
+            const filePaths = new Set<string>();
+            for (const change of changes) {
+                filePaths.add(change.uri.fsPath);
+            }
+
+            return Array.from(filePaths);
+        } catch (error) {
+            this.log(`Error getting diff files: ${error}`);
+            return [];
+        }
+    }
+
+    /**
+     * Get all relevant files in a directory (for static folders)
+     */
+    private async getAllFiles(dirPath: string): Promise<string[]> {
+        const results: string[] = [];
+        const extensions = ['.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.htm'];
+
+        async function walk(dir: string) {
+            const files = await fs.promises.readdir(dir, { withFileTypes: true });
+            for (const file of files) {
+                const res = path.join(dir, file.name);
+                if (file.isDirectory()) {
+                    if (file.name !== 'node_modules' && !file.name.startsWith('.')) {
+                        await walk(res);
+                    }
+                } else {
+                    if (extensions.includes(path.extname(file.name).toLowerCase())) {
+                        results.push(res);
+                    }
+                }
+            }
+        }
+
+        try {
+            await walk(dirPath);
+        } catch (error) {
+            this.log(`Error walking directory ${dirPath}: ${error}`);
+        }
+
+        return results;
     }
 
     /**

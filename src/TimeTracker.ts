@@ -13,6 +13,7 @@ export class TimeTracker {
     private accumulatedPauseTime: number = 0;
     private activityListener: vscode.Disposable | null = null;
     private onUpdateCallback: ((state: TimeTrackerState) => void) | null = null;
+    private onPersistCallback: ((state: import('./types').TimerPersistenceState) => void) | null = null;
     private outputChannel: vscode.OutputChannel;
 
     constructor(outputChannel: vscode.OutputChannel) {
@@ -38,6 +39,13 @@ export class TimeTracker {
      */
     onUpdate(callback: (state: TimeTrackerState) => void): void {
         this.onUpdateCallback = callback;
+    }
+
+    /**
+     * Set callback for periodic persistence (e.g., to disk)
+     */
+    onPersist(callback: (state: import('./types').TimerPersistenceState) => void): void {
+        this.onPersistCallback = callback;
     }
 
     /**
@@ -85,14 +93,21 @@ export class TimeTracker {
 
     /**
      * Resume the timer
+     * @param includeIdle If true, adds the time spent in idle/pause to the elapsed seconds
      */
-    resume(): void {
+    resume(includeIdle: boolean = false): void {
         if (!this.state.isRunning || !this.state.isPaused) {
             return;
         }
 
         if (this.pauseStartTime) {
-            this.accumulatedPauseTime += Date.now() - this.pauseStartTime;
+            const pauseDurationMs = Date.now() - this.pauseStartTime;
+            if (includeIdle) {
+                const pauseSeconds = Math.floor(pauseDurationMs / 1000);
+                this.state.elapsedSeconds += pauseSeconds;
+                this.log(`Resumed: Included ${pauseSeconds}s of idle time`);
+            }
+            this.accumulatedPauseTime += pauseDurationMs;
             this.pauseStartTime = null;
         }
 
@@ -100,7 +115,7 @@ export class TimeTracker {
         this.lastActivityTime = Date.now();
         this.startTimer();
 
-        this.log('Timer resumed');
+        this.log(includeIdle ? 'Timer resumed (with idle)' : 'Timer resumed');
         this.notifyUpdate();
     }
 
@@ -141,6 +156,7 @@ export class TimeTracker {
         };
 
         this.notifyUpdate();
+        this.triggerPersist();
         return log;
     }
 
@@ -183,6 +199,12 @@ export class TimeTracker {
             if (!this.state.isPaused) {
                 this.state.elapsedSeconds++;
                 this.checkIdleTime();
+                
+                // Persist every 30 seconds
+                if (this.state.elapsedSeconds % 30 === 0) {
+                    this.triggerPersist();
+                }
+                
                 this.notifyUpdate();
             }
         }, 1000);
@@ -251,12 +273,16 @@ export class TimeTracker {
             this.log(`Idle detected (${Math.floor(idleMinutes)} min), auto-pausing`);
             this.pause();
             
-            vscode.window.showWarningMessage(
-                `DevLoop: Timer paused due to inactivity. Click Resume to continue.`,
-                'Resume'
+            const idleDisplay = Math.floor(idleMinutes);
+            vscode.window.showInformationMessage(
+                `DevLoop: Timer paused due to ${idleDisplay}m of inactivity.`,
+                'Resume',
+                'Resume (Include Idle Time)'
             ).then(selection => {
                 if (selection === 'Resume') {
-                    this.resume();
+                    this.resume(false);
+                } else if (selection === 'Resume (Include Idle Time)') {
+                    this.resume(true);
                 }
             });
         }
@@ -268,6 +294,65 @@ export class TimeTracker {
     private notifyUpdate(): void {
         if (this.onUpdateCallback) {
             this.onUpdateCallback(this.getState());
+        }
+    }
+
+    /**
+     * Get state for persistence
+     */
+    getPersistenceState(): import('./types').TimerPersistenceState {
+        return {
+            isRunning: this.state.isRunning,
+            isPaused: this.state.isPaused,
+            currentTicketId: this.state.currentTicketId,
+            elapsedSeconds: this.state.elapsedSeconds,
+            lastTickTime: new Date().toISOString(),
+            ticketSnapshot: this.state.ticketSnapshot
+        };
+    }
+
+    /**
+     * Restore state from persistence
+     */
+    restore(persistence: import('./types').TimerPersistenceState, includeDrift: boolean = false): void {
+        this.log(`Restoring timer for ${persistence.currentTicketId}...`);
+        
+        let elapsed = persistence.elapsedSeconds;
+        if (includeDrift && persistence.isRunning && !persistence.isPaused) {
+            const driftMs = Date.now() - new Date(persistence.lastTickTime).getTime();
+            const driftSeconds = Math.floor(driftMs / 1000);
+            if (driftSeconds > 0) {
+                elapsed += driftSeconds;
+                this.log(`Applied drift: ${driftSeconds}s`);
+            }
+        }
+
+        this.state = {
+            isRunning: persistence.isRunning,
+            isPaused: persistence.isPaused,
+            currentTicketId: persistence.currentTicketId,
+            elapsedSeconds: elapsed,
+            sessionStartTime: persistence.lastTickTime, // Best guess
+            ticketSnapshot: persistence.ticketSnapshot
+        };
+
+        if (this.state.isRunning && !this.state.isPaused) {
+            this.startTimer();
+            this.setupActivityListener();
+        } else if (this.state.isRunning && this.state.isPaused) {
+            this.pauseStartTime = Date.now();
+        }
+
+        this.notifyUpdate();
+        this.triggerPersist();
+    }
+
+    /**
+     * Trigger persistence callback
+     */
+    private triggerPersist(): void {
+        if (this.onPersistCallback && this.state.isRunning) {
+            this.onPersistCallback(this.getPersistenceState());
         }
     }
 

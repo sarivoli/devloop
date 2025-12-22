@@ -195,7 +195,8 @@ export class DataManager {
                 mode: repo.mode,
                 branch: repo.currentBranch,
                 baseBranch: repo.baseBranch,
-                createdAt: new Date().toISOString()
+                createdAt: new Date().toISOString(),
+                isStatic: repo.isStatic
             };
         }
 
@@ -375,5 +376,59 @@ export class DataManager {
             today: Math.floor(todayMinutes),
             thisWeek: Math.floor(weekMinutes)
         };
+    }
+
+    /**
+     * Get path to linting results file
+     */
+    private getLintingResultsPath(): string {
+        return path.join(this.getWorkspaceDataPath(), 'linting_results.json');
+    }
+
+    /**
+     * Read persistent linting results
+     */
+    async readLintingResults(): Promise<import('./types').LintingResult[]> {
+        return (await this.readJson<import('./types').LintingResult[]>(this.getLintingResultsPath())) || [];
+    }
+
+    /**
+     * Write persistent linting results
+     */
+    async writeLintingResults(results: import('./types').LintingResult[]): Promise<void> {
+        await this.writeJson(this.getLintingResultsPath(), results);
+    }
+
+    /**
+     * Get path to timer state file
+     */
+    private getTimerStatePath(): string {
+        return path.join(this.getWorkspaceDataPath(), 'timer_state.json');
+    }
+
+    /**
+     * Save timer state
+     */
+    async saveTimerState(state: import('./types').TimerPersistenceState): Promise<void> {
+        await this.writeJson(this.getTimerStatePath(), state);
+    }
+
+    /**
+     * Get saved timer state
+     */
+    async getTimerState(): Promise<import('./types').TimerPersistenceState | null> {
+        return this.readJson<import('./types').TimerPersistenceState>(this.getTimerStatePath());
+    }
+
+    /**
+     * Clear timer state
+     */
+    async clearTimerState(): Promise<void> {
+        const filePath = this.getTimerStatePath();
+        try {
+            await fs.promises.unlink(filePath);
+        } catch {
+            // File might not exist
+        }
     }
 }
