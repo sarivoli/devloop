@@ -35,7 +35,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             activeTicketTotalTime: 0,
             recentTasks: [],
             activeLintTab: 'python',
-            historyStats: { today: 0, thisWeek: 0 }
+            historyStats: { today: 0, thisWeek: 0 },
+            expandedHistoryTickets: [],
+            expandedLintFiles: []
         };
     }
 
@@ -66,7 +68,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             });
 
             // Update Lint Hub if relevant properties changed
-            if (partial.activeLintTab !== undefined || partial.lintingResults !== undefined || partial.searchQuery !== undefined) {
+            if (partial.activeLintTab !== undefined || partial.lintingResults !== undefined || partial.searchQuery !== undefined || partial.expandedLintFiles !== undefined) {
                 this._view.webview.postMessage({
                     type: 'updatePanel',
                     containerId: 'linting-hub-body',
@@ -109,7 +111,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             }
 
             // Handle History updates
-            if (partial.recentTasks !== undefined || partial.historyStats !== undefined) {
+            if (partial.recentTasks !== undefined || partial.historyStats !== undefined || partial.expandedHistoryTickets !== undefined) {
                 this._view.webview.postMessage({
                     type: 'updatePanel',
                     containerId: 'history-tab-container',
@@ -209,6 +211,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const toolkitUri = webview.asWebviewUri(
             vscode.Uri.joinPath(this._extensionUri, 'node_modules', '@vscode', 'webview-ui-toolkit', 'dist', 'toolkit.min.js')
         );
+        const codiconsUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'node_modules', '@vscode', 'codicons', 'dist', 'codicon.css')
+        );
 
         const nonce = getNonce();
         const state = this.dashboardState;
@@ -222,6 +227,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <link href="${styleResetUri}" rel="stylesheet">
     <link href="${styleVSCodeUri}" rel="stylesheet">
     <link href="${styleMainUri}" rel="stylesheet">
+    <link href="${codiconsUri}" rel="stylesheet">
     <script type="module" nonce="${nonce}" src="${toolkitUri}"></script>
     <script nonce="${nonce}">
         // Make vscode API and state available globally before main.js loads
@@ -555,34 +561,71 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
      * Render History Tab
      */
     private renderHistoryTab(): string {
-        const history = this.dashboardState.recentTasks || [];
+        try {
+            const history = this.dashboardState.recentTasks || [];
 
-        if (history.length === 0) {
+            if (history.length === 0) {
+                return `
+                    ${this.renderHistoryStats()}
+                    <div class="empty-state">
+                        <p class="text-muted">No completed tasks yet</p>
+                    </div>
+                `;
+            }
+
             return `
                 ${this.renderHistoryStats()}
-                <div class="empty-state">
-                    <p class="text-muted">No completed tasks yet</p>
+                <div class="history-list">
+                    ${history.map(task => {
+                        if (!task) return '';
+                        const logs = task.logs || [];
+                        const isExpanded = (this.dashboardState.expandedHistoryTickets || []).includes(task.ticketId);
+                        return `
+                        <div class="history-item-container ${isExpanded ? 'expanded' : ''}" data-ticket-id="${task.ticketId}">
+                            <div class="history-item" data-action="toggleHistory" data-ticket-id="${task.ticketId}" title="${task.summary}">
+                                <div class="history-info">
+                                    <div style="display: flex; align-items: center;">
+                                        <span class="history-chevron ${isExpanded ? 'expanded' : ''}" id="chevron-${task.ticketId}">${isExpanded ? '▼' : '▶'}</span>
+                                        <span class="history-id">${task.ticketId}</span>
+                                    </div>
+                                    <span class="history-time">${this.formatRelativeTime(task.completedAt)}</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 4px;">
+                                    <span class="history-duration">${Math.floor(task.totalTime / 60)}h ${task.totalTime % 60}m</span>
+                                    <vscode-button appearance="icon" data-msg-type="startTask" data-msg-payload='${JSON.stringify({ ticketId: task.ticketId })}' title="Restart Task">▶️</vscode-button>
+                                </div>
+                            </div>
+                            <div class="history-details" id="details-${task.ticketId}" style="display: ${isExpanded ? 'block' : 'none'};">
+                                <div class="history-summary">${task.summary}</div>
+                                <div class="history-logs">
+                                    ${logs.length > 0 ? logs.map(log => {
+                                        if (!log) return '';
+                                        const startTime = log.startTime ? new Date(log.startTime) : new Date();
+                                        const endTime = log.endTime ? new Date(log.endTime) : new Date();
+                                        return `
+                                        <div class="log-entry">
+                                            <div class="log-info">
+                                                <span class="log-date">${startTime.toLocaleDateString()}</span>
+                                                <span class="log-time">${startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                            </div>
+                                            <div class="log-actions">
+                                                <span class="log-duration">${Math.floor((log.duration || 0) / 60)}h ${Math.floor((log.duration || 0) % 60)}m</span>
+                                                <vscode-button appearance="icon" title="Delete entry" data-msg-type="deleteLog" data-msg-payload='${JSON.stringify({ ticketId: task.ticketId, logId: log.id })}'>
+                                                    🗑️
+                                                </vscode-button>
+                                            </div>
+                                        </div>
+                                    `}).join('') : '<div class="empty-state">No logs found</div>'}
+                                </div>
+                            </div>
+                        </div>
+                    `}).join('')}
                 </div>
             `;
+        } catch (error) {
+            console.error('Error rendering history tab:', error);
+            return `<div class="error-state">Error loading history: ${error}</div>`;
         }
-
-        return `
-            ${this.renderHistoryStats()}
-            <div class="history-list">
-                ${history.map(task => `
-                    <div class="history-item" title="${task.summary}">
-                        <div class="history-info">
-                            <span class="history-id">${task.ticketId}</span>
-                            <span class="history-time">Updated: ${this.formatRelativeTime(task.completedAt)}</span>
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <span class="history-duration">${Math.floor(task.totalTime / 60)}h ${task.totalTime % 60}m</span>
-                            <vscode-button appearance="icon" data-msg-type="startTask" data-msg-payload='${JSON.stringify({ ticketId: task.ticketId })}'>▶️</vscode-button>
-                        </div>
-                    </div>
-                `).join('')}
-            </div>
-        `;
     }
 
     /**
@@ -671,14 +714,46 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         
         const pythonResults = results.filter(r => ['pep8', 'pyflakes', 'pylint'].includes(r.tool.toLowerCase()));
         const jsResults = results.filter(r => ['eslint', 'jslint', 'typescript'].includes(r.tool.toLowerCase()));
-        const htmlResults = results.filter(r => ['htmllint', 'html'].includes(r.tool.toLowerCase()));
+        const htmlResults = results.filter(r => ['htmllint', 'html', 'html-validate'].includes(r.tool.toLowerCase()));
+        const futurizeResults = results.filter(r => r.tool.toLowerCase() === 'futurize');
+        const counts = this.dashboardState.scannedCounts || { python: 0, javascript: 0, html: 0 };
 
         return `
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <div class="tabs sub-tabs" style="margin-bottom: 0; flex: 1;">
-                    <div class="tab ${activeTab === 'python' ? 'active' : ''}" data-msg-type="switchLintTab" data-msg-payload="python">Python (${pythonResults.length})</div>
-                    <div class="tab ${activeTab === 'javascript' ? 'active' : ''}" data-msg-type="switchLintTab" data-msg-payload="javascript">JS (${jsResults.length})</div>
-                    <div class="tab ${activeTab === 'html' ? 'active' : ''}" data-msg-type="switchLintTab" data-msg-payload="html">HTML (${htmlResults.length})</div>
+            ${this.dashboardState.scanningPath ? `
+                <div class="scan-path-banner" style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${this.dashboardState.scanningPath}">
+                    📂 Scanning: ...${path.basename(this.dashboardState.scanningPath)}
+                </div>
+            ` : ''}
+            <div id="lint-tabs" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; overflow-x: auto;">
+                <div class="tabs sub-tabs" style="margin-bottom: 0; flex: 1; min-width: max-content;">
+                    <div class="tab ${activeTab === 'python' ? 'active' : ''}" data-msg-type="switchLintTab" data-msg-payload="python" title="Python Issues">
+                        <span class="codicon codicon-symbol-variable" style="color: ${counts.python > 0 ? 'var(--vscode-charts-red)' : ''}"></span> 
+                        <span class="count-badge">${pythonResults.length}</span>
+                        <vscode-button appearance="icon" title="Run Python Linters" data-msg-type="runLintingModule" data-msg-payload="python" style="margin-left: 4px; --button-icon-padding: 0;">
+                            <span class="codicon codicon-play"></span>
+                        </vscode-button>
+                    </div>
+                    <div class="tab ${activeTab === 'javascript' ? 'active' : ''}" data-msg-type="switchLintTab" data-msg-payload="javascript" title="JavaScript Issues">
+                        <span class="codicon codicon-symbol-method" style="color: ${counts.javascript > 0 ? 'var(--vscode-charts-red)' : ''}"></span>
+                        <span class="count-badge">${jsResults.length}</span>
+                        <vscode-button appearance="icon" title="Run JS Linters" data-msg-type="runLintingModule" data-msg-payload="javascript" style="margin-left: 4px; --button-icon-padding: 0;">
+                            <span class="codicon codicon-play"></span>
+                        </vscode-button>
+                    </div>
+                    <div class="tab ${activeTab === 'html' ? 'active' : ''}" data-msg-type="switchLintTab" data-msg-payload="html" title="HTML Issues">
+                        <span class="codicon codicon-tag" style="color: ${counts.html > 0 ? 'var(--vscode-charts-red)' : ''}"></span>
+                        <span class="count-badge">${htmlResults.length}</span>
+                        <vscode-button appearance="icon" title="Run HTML Linters" data-msg-type="runLintingModule" data-msg-payload="html" style="margin-left: 4px; --button-icon-padding: 0;">
+                            <span class="codicon codicon-play"></span>
+                        </vscode-button>
+                    </div>
+                    <div class="tab ${activeTab === 'futurize' ? 'active' : ''}" data-msg-type="switchLintTab" data-msg-payload="futurize" title="Futurize (Python 2->3)">
+                        <span class="codicon codicon-wand" style="color: ${futurizeResults.length > 0 ? 'var(--vscode-charts-yellow)' : ''}"></span>
+                        <span class="count-badge">${futurizeResults.length}</span>
+                        <vscode-button appearance="icon" title="Run Futurize" data-msg-type="runLintingModule" data-msg-payload="futurize" style="margin-left: 4px; --button-icon-padding: 0;">
+                            <span class="codicon codicon-play"></span>
+                        </vscode-button>
+                    </div>
                 </div>
             </div>`;
     }
@@ -711,11 +786,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         
         const pythonResults = results.filter(r => ['pep8', 'pyflakes', 'pylint'].includes(r.tool.toLowerCase()));
         const jsResults = results.filter(r => ['eslint', 'jslint', 'typescript'].includes(r.tool.toLowerCase()));
-        const htmlResults = results.filter(r => ['htmllint', 'html'].includes(r.tool.toLowerCase()));
+        const htmlResults = results.filter(r => ['htmllint', 'html', 'html-validate'].includes(r.tool.toLowerCase()));
+        const futurizeResults = results.filter(r => r.tool.toLowerCase() === 'futurize');
 
         let filteredResults = activeTab === 'python' ? pythonResults 
                             : activeTab === 'javascript' ? jsResults 
-                            : htmlResults;
+                            : activeTab === 'html' ? htmlResults
+                            : futurizeResults;
 
         if (searchQuery) {
             filteredResults = filteredResults.filter(r => 
@@ -723,40 +800,81 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             );
         }
 
+        const counts = this.dashboardState.scannedCounts || { python: 0, javascript: 0, html: 0 };
+        const scannedCount = activeTab === 'python' ? counts.python 
+                           : activeTab === 'javascript' ? counts.javascript 
+                           : activeTab === 'html' ? counts.html
+                           : counts.python; // Use python counts for futurize
+
+        // Group by file
+        const fileGroups = new Map<string, LintingResult[]>();
+        filteredResults.forEach(res => {
+            const group = fileGroups.get(res.file) || [];
+            group.push(res);
+            fileGroups.set(res.file, group);
+        });
+
+        const sortedFiles = Array.from(fileGroups.keys()).sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
+
         return `
             <div class="issue-list">
-                ${filteredResults.length > 0 ? filteredResults.slice(0, 50).map(issue => {
+                ${sortedFiles.length > 0 ? sortedFiles.map(filePath => {
+                    const issues = fileGroups.get(filePath) || [];
                     const relativePath = vscode.workspace.workspaceFolders 
-                        ? path.relative(vscode.workspace.workspaceFolders[0].uri.fsPath, issue.file)
-                        : issue.file;
-                    const fileName = path.basename(issue.file);
-                    const isHighlighted = !searchQuery && this.dashboardState.activeFile === issue.file;
-                    const issueId = `issue-${issue.file.replace(/\\/g, '-').replace(/\//g, '-')}-${issue.line}`;
+                        ? path.relative(vscode.workspace.workspaceFolders[0].uri.fsPath, filePath)
+                        : filePath;
+                    const fileName = path.basename(filePath);
+                    const isExpanded = (this.dashboardState.expandedLintFiles || []).includes(filePath);
+                    const fixableCount = issues.filter(r => r.canFix).length;
 
                     return `
-                    <div class="issue-item clickable ${isHighlighted ? 'highlight' : ''}" id="${issueId}" data-msg-type="showIssue" data-msg-payload='${JSON.stringify({ file: issue.file.replace(/\\/g, '\\\\'), line: issue.line, noScroll: true })}'>
-                        <div style="flex: 1; overflow: hidden;">
-                            <div class="issue-file" title="${relativePath}">${fileName}:${issue.line}</div>
-                            <div class="issue-msg" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                                <span class="issue-severity ${issue.severity}">${issue.severity.toUpperCase()}</span>
-                                ${issue.message}
-                            </div>
+                    <div class="lint-file-group ${isExpanded ? 'expanded' : ''}" data-file="${filePath}">
+                        <div class="lint-file-header clickable" data-msg-type="toggleLintFile" data-msg-payload='${JSON.stringify(filePath)}'>
+                            <span class="codicon codicon-chevron-${isExpanded ? 'down' : 'right'}" style="margin-right: 4px;"></span>
+                            <span class="file-name" title="${relativePath}">${fileName}</span>
+                            <vscode-badge style="margin-left: 8px;">${issues.length}</vscode-badge>
+                            ${fixableCount > 0 ? `
+                                <vscode-button appearance="icon" title="Fix All in this file" data-msg-type="fixFile" data-msg-payload='${JSON.stringify({ file: filePath })}' style="margin-left: auto;">
+                                    ⚡
+                                </vscode-button>
+                            ` : ''}
                         </div>
-                        <div class="issue-actions" style="display: flex; gap: 4px;">
-                            ${issue.canFix 
-                                ? `<vscode-button appearance="icon" title="Auto-fix" data-msg-type="fixIssue" data-msg-payload='${JSON.stringify({ file: issue.file.replace(/\\/g, '\\\\'), line: issue.line })}'>⚡</vscode-button>`
-                                : ''
-                            }
-                            <vscode-button appearance="icon" title="Show in editor" data-msg-type="showIssue" data-msg-payload='${JSON.stringify({ file: issue.file.replace(/\\/g, '\\\\'), line: issue.line, noScroll: true })}'>
-                                🔍
-                            </vscode-button>
+                        <div class="lint-issues" style="display: ${isExpanded ? 'block' : 'none'};">
+                            ${issues.map(issue => {
+                                const issueId = `issue-${issue.file.replace(/\\/g, '-').replace(/\//g, '-')}-${issue.line}`;
+                                return `
+                                <div class="issue-item clickable" id="${issueId}" data-msg-type="showIssue" data-msg-payload='${JSON.stringify({ file: issue.file.replace(/\\/g, '\\\\'), line: issue.line, noScroll: true })}'>
+                                    <div style="flex: 1; overflow: hidden;">
+                                        <div class="issue-line">Line ${issue.line}</div>
+                                        <div class="issue-msg" style="white-space: normal; word-wrap: break-word;" title="${issue.message}">
+                                            <span class="issue-severity ${issue.severity}">${issue.severity.toUpperCase()}</span>
+                                            ${issue.message}
+                                        </div>
+                                    </div>
+                                    <div class="issue-actions" style="display: flex; gap: 4px;">
+                                        ${issue.canFix 
+                                            ? `<vscode-button appearance="icon" title="Auto-fix" data-msg-type="fixIssue" data-msg-payload='${JSON.stringify({ file: issue.file.replace(/\\/g, '\\\\'), line: issue.line })}'>⚡</vscode-button>`
+                                            : ''
+                                        }
+                                        <vscode-button appearance="icon" title="Show in editor" data-msg-type="showIssue" data-msg-payload='${JSON.stringify({ file: issue.file.replace(/\\/g, '\\\\'), line: issue.line, noScroll: true })}'>
+                                            🔍
+                                        </vscode-button>
+                                    </div>
+                                </div>
+                                `;
+                            }).join('')}
                         </div>
                     </div>
-                `;}).join('') : '<div class="empty-state">No issues found in this category</div>'}
+                    `;
+                }).join('') : `
+                    <div class="empty-state">
+                        <p>${scannedCount > 0 ? `✅ ${scannedCount} files scanned and no issues found.` : 'No files scanned yet.'}</p>
+                    </div>
+                `}
             </div>
             ${filteredResults.length > 0 ? `
                 <vscode-button appearance="primary" style="width: 100%; margin-top: 12px;" data-msg-type="fixAll" data-msg-payload="${activeTab}">
-                    Fix All ${activeTab.toUpperCase()} (${filteredResults.filter(r => r.canFix).length})
+                    Fix All ${activeTab === 'futurize' ? 'Futurize Issues' : activeTab.toUpperCase()} (${filteredResults.filter(r => r.canFix).length})
                 </vscode-button>
             ` : ''}
         `;

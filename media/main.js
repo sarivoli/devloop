@@ -35,6 +35,29 @@
         }
     };
 
+    window.toggleHistoryItem = function(ticketId, event) {
+        console.log('DevLoop: Toggling history item:', ticketId);
+        const details = document.getElementById(`details-${ticketId}`);
+        const chevron = document.getElementById(`chevron-${ticketId}`);
+        if (details) {
+            const isHidden = details.style.display === 'none';
+            details.style.display = isHidden ? 'block' : 'none';
+            if (chevron) {
+                chevron.textContent = isHidden ? '▼' : '▶';
+                chevron.classList.toggle('expanded', isHidden);
+            }
+            
+            // Highlight the container
+            const container = details.closest('.history-item-container');
+            if (container) {
+                container.classList.toggle('expanded', isHidden);
+            }
+
+            // Sync with extension for persistence
+            window.sendMessage('toggleHistory', { ticketId, expanded: isHidden });
+        }
+    };
+
     window.toggleWidget = function(widgetId, event) {
         if (event) {
             // If the click was on a button or something interactive, don't toggle
@@ -184,6 +207,23 @@
                             highlighted.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                         }, 100);
                     }
+
+                    // Restore tabs scroll position
+                    const tabsContainer = container.querySelector('#lint-tabs');
+                    if (tabsContainer) {
+                        const savedScroll = window.dashboardState[`scroll_lint_tabs`];
+                        if (savedScroll) {
+                            tabsContainer.scrollLeft = savedScroll;
+                        }
+                    
+                        // Add listener to save scroll
+                        tabsContainer.addEventListener('scroll', () => {
+                            window.sendMessage('saveScrollState', { 
+                                id: 'lint_tabs', 
+                                value: tabsContainer.scrollLeft 
+                            });
+                        });
+                    }
                 }
                 break;
             
@@ -329,6 +369,22 @@
                     return;
                 }
             }
+
+            // 4. Handle History Toggle (Event Delegation)
+            const historyItem = event.target.closest('[data-action="toggleHistory"]');
+            if (historyItem) {
+                // If the click was on a restart button or something interactive inside, don't toggle
+                if (event.target.closest('vscode-button') || event.target.closest('.log-actions')) {
+                    console.log('DevLoop: Suppressing history toggle for interactive element');
+                    return;
+                }
+                const ticketId = historyItem.getAttribute('data-ticket-id');
+                if (ticketId) {
+                    toggleHistoryItem(ticketId);
+                }
+                return;
+            }
+
         });
         
         // Handle checkbox changes via delegation (CSP safe)

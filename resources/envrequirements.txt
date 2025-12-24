@@ -1,0 +1,5 @@
+autopep8>=2.0.0
+flake8>=6.0.0
+black>=23.0.0
+pylint>=3.0.0
+future>=0.18.3

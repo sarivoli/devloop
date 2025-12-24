@@ -498,18 +498,48 @@ export class GitManager {
     }
 
     /**
+     * Predefined list of directories to exclude from static scans
+     */
+    private static readonly DEFAULT_EXCLUSIONS = [
+        'node_modules', '.git', 'dist', 'build', 'temp', 'tmp', 'bin', 'obj', '.vscode', '.idea', 'venv', '.venv'
+    ];
+
+    /**
+     * Check if a file is ignored by Git
+     */
+    async isIgnored(repoPath: string, filePath: string): Promise<boolean> {
+        if (this.useMock) return false;
+        
+        const cp = require('child_process');
+        const util = require('util');
+        const exec = util.promisify(cp.exec);
+
+        try {
+            // Relative path for git check-ignore
+            const relativePath = path.relative(repoPath, filePath);
+            await exec(`git check-ignore "${relativePath}"`, { cwd: repoPath });
+            // If it doesn't error, it's ignored
+            return true;
+        } catch {
+            // Error means not ignored
+            return false;
+        }
+    }
+
+    /**
      * Get all relevant files in a directory (for static folders)
      */
     private async getAllFiles(dirPath: string): Promise<string[]> {
         const results: string[] = [];
         const extensions = ['.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.htm'];
 
-        async function walk(dir: string) {
+        const walk = async (dir: string) => {
             const files = await fs.promises.readdir(dir, { withFileTypes: true });
             for (const file of files) {
                 const res = path.join(dir, file.name);
                 if (file.isDirectory()) {
-                    if (file.name !== 'node_modules' && !file.name.startsWith('.')) {
+                    // Check exclusions
+                    if (!GitManager.DEFAULT_EXCLUSIONS.includes(file.name) && !file.name.startsWith('.')) {
                         await walk(res);
                     }
                 } else {
@@ -518,7 +548,7 @@ export class GitManager {
                     }
                 }
             }
-        }
+        };
 
         try {
             await walk(dirPath);

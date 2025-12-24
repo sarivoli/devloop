@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "eslint": "^8.0.0",
+    "html-validate": "^8.0.0",
+    "prettier": "^3.0.0",
+    "htmllint-cli": "^0.0.7"
+  },
+  "devDependencies": {}
+}

@@ -227,6 +227,23 @@ export class DataManager {
     }
 
     /**
+     * Delete a work log from a ticket manifest
+     */
+    async deleteWorkLog(ticketId: string, logId: string): Promise<void> {
+        const manifest = await this.readManifest(ticketId);
+        if (manifest) {
+            const index = manifest.logs.findIndex(l => l.id === logId);
+            if (index !== -1) {
+                const log = manifest.logs[index];
+                manifest.totalLoggedTime -= log.duration;
+                manifest.logs.splice(index, 1);
+                manifest.lastUpdated = new Date().toISOString();
+                await this.writeManifest(manifest);
+            }
+        }
+    }
+
+    /**
      * Get unsynced logs for a ticket
      */
     async getUnsyncedLogs(ticketId: string): Promise<WorkLog[]> {
@@ -312,7 +329,8 @@ export class DataManager {
                     ticketId: manifest.ticketId,
                     summary: manifest.ticketSummary,
                     completedAt: displayDate,
-                    totalTime: Math.floor(manifest.totalLoggedTime)
+                    totalTime: Math.floor(manifest.totalLoggedTime),
+                    logs: manifest.logs
                 });
             }
         }
@@ -400,6 +418,27 @@ export class DataManager {
     }
 
     /**
+     * Get path to scanned counts file
+     */
+    private getScannedCountsPath(): string {
+        return path.join(this.getWorkspaceDataPath(), 'scanned_counts.json');
+    }
+
+    /**
+     * Read persistent scanned counts
+     */
+    async readScannedCounts(): Promise<{ python: number, javascript: number, html: number }> {
+        return (await this.readJson<{ python: number, javascript: number, html: number }>(this.getScannedCountsPath())) || { python: 0, javascript: 0, html: 0 };
+    }
+
+    /**
+     * Write persistent scanned counts
+     */
+    async writeScannedCounts(counts: { python: number, javascript: number, html: number }): Promise<void> {
+        await this.writeJson(this.getScannedCountsPath(), counts);
+    }
+
+    /**
      * Get path to timer state file
      */
     private getTimerStatePath(): string {
@@ -418,6 +457,27 @@ export class DataManager {
      */
     async getTimerState(): Promise<import('./types').TimerPersistenceState | null> {
         return this.readJson<import('./types').TimerPersistenceState>(this.getTimerStatePath());
+    }
+
+    /**
+     * Get path to activity log file
+     */
+    private getActivityLogPath(): string {
+        return path.join(this.getWorkspaceDataPath(), 'activity_log.json');
+    }
+
+    /**
+     * Read persistent activity log
+     */
+    async readActivityLog(): Promise<import('./types').ActivityItem[]> {
+        return (await this.readJson<import('./types').ActivityItem[]>(this.getActivityLogPath())) || [];
+    }
+
+    /**
+     * Write persistent activity log
+     */
+    async writeActivityLog(logs: import('./types').ActivityItem[]): Promise<void> {
+        await this.writeJson(this.getActivityLogPath(), logs);
     }
 
     /**

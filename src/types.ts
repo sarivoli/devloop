@@ -163,11 +163,15 @@ export interface DashboardState {
     configKeys: ConfigKey[];
     activityStream: ActivityItem[];
     recentTasks: RecentTask[];
-    activeLintTab?: 'python' | 'javascript' | 'html';
+    activeLintTab?: 'python' | 'javascript' | 'html' | 'futurize';
     activeMainTab?: 'active-task' | 'history' | 'jira-config';
     activeFile?: string;
     searchQuery?: string;
     historyStats: { today: number; thisWeek: number };
+    scannedCounts?: { python: number; javascript: number; html: number };
+    scanningPath?: string;
+    expandedHistoryTickets: string[];
+    expandedLintFiles: string[];
 }
 
 export interface RecentTask {
@@ -175,6 +179,7 @@ export interface RecentTask {
     summary: string;
     completedAt: string;
     totalTime: number; // minutes
+    logs?: WorkLog[];
 }
 
 export interface ProjectHealth {

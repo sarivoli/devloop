@@ -1,0 +1,11 @@
+{
+  "extends": ["html-validate:recommended"],
+  "rules": {
+    "no-unknown-elements": "error",
+    "void-style": "off",
+    "no-trailing-whitespace": "off",
+    "missing-doctype": "error",
+    "close-order": "error",
+    "no-unused-disable": "off"
+  }
+}
